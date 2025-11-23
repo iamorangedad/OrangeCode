@@ -2,11 +2,24 @@ import os
 import json
 import subprocess
 import ollama
+from rich.console import Console
+from rich.panel import Panel
+from rich.prompt import Prompt, Confirm
+from rich.syntax import Syntax
+from rich.markdown import Markdown
+from rich.live import Live
+from rich.spinner import Spinner
+from rich.table import Table
+from rich import box
+
+# Initialize Rich console
+console = Console()
 
 # --- 1. Define Tools ---
 
 
 def read_file(path):
+    """Read file content with error handling"""
     try:
         if not os.path.exists(path):
             return "Error: File not found."
@@ -17,6 +30,7 @@ def read_file(path):
 
 
 def write_file(path, content):
+    """Write content to file with error handling"""
     try:
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
@@ -26,18 +40,29 @@ def write_file(path, content):
 
 
 def list_files():
+    """List files in current directory"""
     return str(os.listdir("."))
 
 
 def run_command(command):
-    # SAFETY CHECK: Ask user for permission before running shell commands
-    print(f"\n[⚠️ SAFETY CHECK] Agent wants to run command: {command}")
-    confirm = input("Allow execution? (y/n): ")
-    if confirm.lower() != "y":
+    """Execute shell command with safety confirmation"""
+    # Display safety warning with Rich
+    console.print(
+        Panel(
+            f"[yellow]Command:[/yellow] [cyan]{command}[/cyan]",
+            title="⚠️  Safety Check",
+            border_style="yellow",
+            box=box.ROUNDED,
+        )
+    )
+
+    # Ask for confirmation
+    confirm = Confirm.ask("Allow execution?", default=False)
+    if not confirm:
         return "Error: User denied command execution."
 
     try:
-        # Run command with a timeout to prevent hanging
+        # Run command with timeout
         result = subprocess.run(
             command, shell=True, capture_output=True, text=True, timeout=30
         )
@@ -68,32 +93,58 @@ Do not output any other text when calling a tool. Only the JSON.
 # Initialize conversation history
 messages = [{"role": "system", "content": system_prompt}]
 
-print("--- Local Agent Started (Type 'quit' to exit) ---")
-print("--- Supported Tools: read_file, write_file, list_files, run_command ---")
+# --- 3. Display Welcome Screen ---
+console.clear()
+console.print(
+    Panel.fit(
+        "[bold cyan]Local Autonomous Coding Agent[/bold cyan]\n"
+        "[dim]Powered by Ollama + Rich[/dim]",
+        border_style="cyan",
+        box=box.DOUBLE,
+    )
+)
 
+# Display available tools table
+tools_table = Table(title="Available Tools", box=box.ROUNDED, border_style="green")
+tools_table.add_column("Tool", style="cyan", no_wrap=True)
+tools_table.add_column("Description", style="white")
+tools_table.add_row("read_file", "Read content from a file")
+tools_table.add_row("write_file", "Write content to a file")
+tools_table.add_row("list_files", "List files in current directory")
+tools_table.add_row("run_command", "Execute shell commands")
+console.print(tools_table)
+console.print("[dim]Type 'quit' or 'exit' to stop[/dim]\n")
+
+# --- 4. Main Loop ---
 while True:
-    client = ollama.Client(host="http://localhost:11434")
-    # --- 3. User Input ---
-    user_input = input("\nUser: ")
+    client = ollama.Client(host="http://10.0.0.26:11434")
+    MODEL_NAME = "qwen2.5-coder:0.5b"
+
+    # Get user input with Rich prompt
+    user_input = Prompt.ask("\n[bold green]You[/bold green]")
+
     if user_input.lower() in ["quit", "exit"]:
+        console.print(
+            Panel("[bold yellow]Goodbye! 👋[/bold yellow]", border_style="yellow")
+        )
         break
 
     messages.append({"role": "user", "content": user_input})
 
-    # --- 4. LLM Generation ---
-    print("Agent is thinking...")
-    try:
-        response = client.chat(model="qwen2.5-coder:0.5b", messages=messages)
-    except Exception as e:
-        print(f"Ollama Error: {e}")
-        continue
+    # Show thinking indicator
+    with console.status("[bold cyan]Agent is thinking...[/bold cyan]", spinner="dots"):
+        try:
+            response = client.chat(model=MODEL_NAME, messages=messages)
+        except Exception as e:
+            console.print(f"[bold red]Ollama Error:[/bold red] {e}")
+            continue
 
     content = response["message"]["content"]
 
     # --- 5. Tool Detection & Execution ---
     if '{"tool":' in content:
         try:
-            # Clean up JSON (sometimes models add markdown code blocks)
+            # Clean up JSON
             json_str = content
             if "```json" in content:
                 json_str = content.split("```json")[1].split("```")[0]
@@ -109,9 +160,18 @@ while True:
             tool_name = parsed_json.get("tool")
             args = parsed_json.get("args", {})
 
-            print(f"[System] Tool detected: {tool_name}")
+            # Display tool call information
+            console.print(
+                Panel(
+                    f"[yellow]Tool:[/yellow] [bold cyan]{tool_name}[/bold cyan]\n"
+                    f"[yellow]Args:[/yellow] {json.dumps(args, indent=2)}",
+                    title="🔧 Tool Execution",
+                    border_style="blue",
+                    box=box.ROUNDED,
+                )
+            )
 
-            # Execute Tool
+            # Execute tool
             result = "Error: Tool not found"
             if tool_name == "read_file":
                 result = read_file(args.get("path"))
@@ -121,25 +181,52 @@ while True:
                 result = list_files()
             elif tool_name == "run_command":
                 result = run_command(args.get("command"))
-            print(result)
-            # --- 6. Feed Result Back to LLM ---
-            # Add the model's tool call and the actual tool output to history
+
+            # Display result
+            if result.startswith("Error"):
+                console.print(Panel(result, border_style="red", title="❌ Error"))
+            else:
+                console.print(Panel(result, border_style="green", title="✅ Result"))
+
+            # Feed result back to LLM
             messages.append({"role": "assistant", "content": content})
             messages.append(
                 {"role": "user", "content": f"Tool Execution Result: {result}"}
             )
 
-            # Generate final response interpreting the tool output
-            final_response = client.chat(model="qwen2.5-coder:0.5b", messages=messages)
-            final_content = final_response["message"]["content"]
+            # Generate final response
+            with console.status("[bold cyan]Interpreting results...[/bold cyan]"):
+                final_response = client.chat(model=MODEL_NAME, messages=messages)
+                final_content = final_response["message"]["content"]
 
-            print(f"Agent: {final_content}")
+            # Display agent response
+            console.print(
+                Panel(
+                    Markdown(final_content),
+                    title="🤖 Agent Response",
+                    border_style="cyan",
+                    box=box.ROUNDED,
+                )
+            )
             messages.append({"role": "assistant", "content": final_content})
 
         except json.JSONDecodeError:
-            print("System: Failed to parse tool call JSON.")
-            print(f"Agent (Raw): {content}")
+            console.print(
+                "[bold red]System:[/bold red] Failed to parse tool call JSON."
+            )
+            console.print(
+                Panel(
+                    content, title="Raw Output", border_style="yellow", box=box.ROUNDED
+                )
+            )
     else:
-        # No tool called, just normal chat
-        print(f"Agent: {content}")
+        # No tool called, display normal chat response
+        console.print(
+            Panel(
+                Markdown(content),
+                title="🤖 Agent",
+                border_style="cyan",
+                box=box.ROUNDED,
+            )
+        )
         messages.append({"role": "assistant", "content": content})
