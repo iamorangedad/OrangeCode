@@ -118,7 +118,6 @@ console.print("[dim]Type 'quit' or 'exit' to stop[/dim]\n")
 # --- 4. Main Loop ---
 while True:
     client = ollama.Client(host="http://10.0.0.26:11434")
-    MODEL_NAME = "qwen2.5-coder:0.5b"
 
     # Get user input with Rich prompt
     user_input = Prompt.ask("\n[bold green]You[/bold green]")
@@ -134,7 +133,7 @@ while True:
     # Show thinking indicator
     with console.status("[bold cyan]Agent is thinking...[/bold cyan]", spinner="dots"):
         try:
-            response = client.chat(model=MODEL_NAME, messages=messages)
+            response = client.chat(model="qwen2.5-coder:0.5b", messages=messages)
         except Exception as e:
             console.print(f"[bold red]Ollama Error:[/bold red] {e}")
             continue
@@ -196,7 +195,9 @@ while True:
 
             # Generate final response
             with console.status("[bold cyan]Interpreting results...[/bold cyan]"):
-                final_response = client.chat(model=MODEL_NAME, messages=messages)
+                final_response = client.chat(
+                    model="qwen2.5-coder:0.5b", messages=messages
+                )
                 final_content = final_response["message"]["content"]
 
             # Display agent response
