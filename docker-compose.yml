@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  # Context Management Microservice
+  context-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.context
+    container_name: code-agent-context
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./chroma_db:/app/chroma_db
+      - ./context_logs:/app/logs
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - agent-network
+
+  # Optional: Admin UI for context inspection
+  context-admin:
+    image: python:3.10-slim
+    container_name: context-admin
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./admin_ui.py:/app/admin_ui.py
+      - ./chroma_db:/app/chroma_db
+    command: >
+      sh -c "pip install streamlit chromadb pandas requests &&
+             streamlit run /app/admin_ui.py --server.port=8501 --server.address=0.0.0.0"
+    depends_on:
+      - context-service
+    networks:
+      - agent-network
+
+networks:
+  agent-network:
+    driver: bridge
+
+volumes:
+  chroma_db:
+  context_logs:
