@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import subprocess
 import ollama
 from rich.console import Console
@@ -11,6 +12,7 @@ from rich.live import Live
 from rich.spinner import Spinner
 from rich.table import Table
 from rich import box
+from utils import extract_filename_from_code, get_unique_filename
 
 # Initialize Rich console
 console = Console()
@@ -32,6 +34,7 @@ def read_file(path):
 def write_file(path, content):
     """Write content to file with error handling"""
     try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
         return f"Success: File '{path}' written successfully."
@@ -46,7 +49,6 @@ def list_files():
 
 def run_command(command):
     """Execute shell command with safety confirmation"""
-    # Display safety warning with Rich
     console.print(
         Panel(
             f"[yellow]Command:[/yellow] [cyan]{command}[/cyan]",
@@ -55,14 +57,10 @@ def run_command(command):
             box=box.ROUNDED,
         )
     )
-
-    # Ask for confirmation
     confirm = Confirm.ask("Allow execution?", default=False)
     if not confirm:
         return "Error: User denied command execution."
-
     try:
-        # Run command with timeout
         result = subprocess.run(
             command, shell=True, capture_output=True, text=True, timeout=30
         )
@@ -74,26 +72,100 @@ def run_command(command):
         return f"Error executing command: {str(e)}"
 
 
-# --- 2. System Prompt ---
+# --- 2. Code Extraction & Processing ---
 
-system_prompt = """
-You are an autonomous coding agent. You have access to the following tools:
 
-1. read_file: Reads the content of a file. Args: path (string)
-2. write_file: Writes content to a file. Args: path (string), content (string)
-3. list_files: Lists files in the current directory. No args.
-4. run_command: Executes a shell command. Args: command (string)
+def extract_code_blocks(content):
+    """Extract all code blocks from content"""
+    pattern = r"```(\w+)?\n(.*?)\n```"
+    matches = re.findall(pattern, content, re.DOTALL)
+    return matches  # Returns list of tuples: (language, code)
 
-When you need to use a tool, you MUST output the request in strict JSON format.
-Example: {"tool": "write_file", "args": {"path": "hello.py", "content": "print('hello')"}}
 
-Do not output any other text when calling a tool. Only the JSON.
-"""
+def get_unique_filename(base_name):
+    """Generate unique filename to avoid overwriting existing files"""
+    if not os.path.exists(base_name):
+        return base_name
 
-# Initialize conversation history
-messages = [{"role": "system", "content": system_prompt}]
+    name, ext = os.path.splitext(base_name)
+    counter = 1
+    while os.path.exists(f"{name}_{counter}{ext}"):
+        counter += 1
+    return f"{name}_{counter}{ext}"
 
-# --- 3. Display Welcome Screen ---
+
+def process_response(content):
+    """Process LLM response and extract code blocks"""
+    code_blocks = extract_code_blocks(content)
+
+    if code_blocks:
+        files_created = []
+        for idx, (lang, code) in enumerate(code_blocks):
+            # Try to extract meaningful filename from code
+            extracted_filename = extract_filename_from_code(code, lang)
+
+            if lang in ["python", "py"]:
+                base_filename = extracted_filename or f"generated_{idx}.py"
+                filename = get_unique_filename(base_filename)
+                result = write_file(filename, code)
+                files_created.append((filename, lang, result))
+                console.print(
+                    Panel(
+                        Syntax(code, "python", theme="monokai", line_numbers=True),
+                        title=f"📝 Code Block ({lang})",
+                        border_style="cyan",
+                        box=box.ROUNDED,
+                    )
+                )
+                console.print(
+                    Panel(result, border_style="green", title="✅ File Creation Result")
+                )
+            elif lang in ["javascript", "js", "typescript", "ts"]:
+                base_filename = extracted_filename or f"generated_{idx}.js"
+                filename = get_unique_filename(base_filename)
+                result = write_file(filename, code)
+                files_created.append((filename, lang, result))
+                console.print(
+                    Panel(
+                        Syntax(code, "javascript", theme="monokai", line_numbers=True),
+                        title=f"📝 Code Block ({lang})",
+                        border_style="cyan",
+                        box=box.ROUNDED,
+                    )
+                )
+                console.print(
+                    Panel(result, border_style="green", title="✅ File Creation Result")
+                )
+            elif lang in ["bash", "shell", "sh"]:
+                base_filename = extracted_filename or f"generated_{idx}.sh"
+                filename = get_unique_filename(base_filename)
+                result = write_file(filename, code)
+                files_created.append((filename, lang, result))
+                console.print(
+                    Panel(
+                        Syntax(code, "bash", theme="monokai", line_numbers=True),
+                        title=f"📝 Code Block ({lang})",
+                        border_style="cyan",
+                        box=box.ROUNDED,
+                    )
+                )
+                console.print(
+                    Panel(result, border_style="green", title="✅ File Creation Result")
+                )
+
+        return files_created
+    return []
+
+
+# --- 3. Initialize Conversation ---
+
+# Initialize conversation history (no system prompt needed)
+messages = []
+
+# Initialize Ollama client
+client_instance = None
+
+# --- 4. Display Welcome Screen ---
 console.clear()
 console.print(
     Panel.fit(
@@ -104,22 +176,20 @@ console.print(
     )
 )
 
-# Display available tools table
-tools_table = Table(title="Available Tools", box=box.ROUNDED, border_style="green")
-tools_table.add_column("Tool", style="cyan", no_wrap=True)
+tools_table = Table(title="Available Features", box=box.ROUNDED, border_style="green")
+tools_table.add_column("Feature", style="cyan", no_wrap=True)
 tools_table.add_column("Description", style="white")
-tools_table.add_row("read_file", "Read content from a file")
-tools_table.add_row("write_file", "Write content to a file")
-tools_table.add_row("list_files", "List files in current directory")
-tools_table.add_row("run_command", "Execute shell commands")
+tools_table.add_row("Code Generation", "Generate and save code from your requests")
+tools_table.add_row("Auto File Creation", "Automatically create Python, JS, Bash files")
+tools_table.add_row("Code Display", "Syntax-highlighted code preview")
+tools_table.add_row("Conversation History", "Maintain context across multiple requests")
 console.print(tools_table)
 console.print("[dim]Type 'quit' or 'exit' to stop[/dim]\n")
 
-# --- 4. Main Loop ---
+# --- 5. Main Loop ---
 while True:
-    client = ollama.Client(host="http://10.0.0.26:11434")
+    client = ollama.Client(host="http://10.0.0.56:11434")
 
-    # Get user input with Rich prompt
     user_input = Prompt.ask("\n[bold green]You[/bold green]")
 
     if user_input.lower() in ["quit", "exit"]:
@@ -130,104 +200,38 @@ while True:
 
     messages.append({"role": "user", "content": user_input})
 
-    # Show thinking indicator
     with console.status("[bold cyan]Agent is thinking...[/bold cyan]", spinner="dots"):
         try:
             response = client.chat(model="qwen2.5-coder:0.5b", messages=messages)
         except Exception as e:
             console.print(f"[bold red]Ollama Error:[/bold red] {e}")
+            messages.pop()
             continue
 
     content = response["message"]["content"]
 
-    # --- 5. Tool Detection & Execution ---
-    if '{"tool":' in content:
-        try:
-            # Clean up JSON
-            json_str = content
-            if "```json" in content:
-                json_str = content.split("```json")[1].split("```")[0]
-            elif "```" in content:
-                json_str = content.split("```")[1].split("```")[0]
+    # --- 6. Process Response and Extract Code ---
+    console.print(
+        Panel(
+            Markdown(content),
+            title="🤖 Agent Response",
+            border_style="cyan",
+            box=box.ROUNDED,
+        )
+    )
 
-            # Extract JSON object
-            start_idx = json_str.find("{")
-            end_idx = json_str.rfind("}") + 1
-            clean_json = json_str[start_idx:end_idx]
+    # Extract and process code blocks
+    files_created = process_response(content)
 
-            parsed_json = json.loads(clean_json)
-            tool_name = parsed_json.get("tool")
-            args = parsed_json.get("args", {})
-
-            # Display tool call information
-            console.print(
-                Panel(
-                    f"[yellow]Tool:[/yellow] [bold cyan]{tool_name}[/bold cyan]\n"
-                    f"[yellow]Args:[/yellow] {json.dumps(args, indent=2)}",
-                    title="🔧 Tool Execution",
-                    border_style="blue",
-                    box=box.ROUNDED,
-                )
-            )
-
-            # Execute tool
-            result = "Error: Tool not found"
-            if tool_name == "read_file":
-                result = read_file(args.get("path"))
-            elif tool_name == "write_file":
-                result = write_file(args.get("path"), args.get("content"))
-            elif tool_name == "list_files":
-                result = list_files()
-            elif tool_name == "run_command":
-                result = run_command(args.get("command"))
-
-            # Display result
-            if result.startswith("Error"):
-                console.print(Panel(result, border_style="red", title="❌ Error"))
-            else:
-                console.print(Panel(result, border_style="green", title="✅ Result"))
-
-            # Feed result back to LLM
-            messages.append({"role": "assistant", "content": content})
-            messages.append(
-                {"role": "user", "content": f"Tool Execution Result: {result}"}
-            )
-
-            # Generate final response
-            with console.status("[bold cyan]Interpreting results...[/bold cyan]"):
-                final_response = client.chat(
-                    model="qwen2.5-coder:0.5b", messages=messages
-                )
-                final_content = final_response["message"]["content"]
-
-            # Display agent response
-            console.print(
-                Panel(
-                    Markdown(final_content),
-                    title="🤖 Agent Response",
-                    border_style="cyan",
-                    box=box.ROUNDED,
-                )
-            )
-            messages.append({"role": "assistant", "content": final_content})
-
-        except json.JSONDecodeError:
-            console.print(
-                "[bold red]System:[/bold red] Failed to parse tool call JSON."
-            )
-            console.print(
-                Panel(
-                    content, title="Raw Output", border_style="yellow", box=box.ROUNDED
-                )
-            )
-    else:
-        # No tool called, display normal chat response
+    if files_created:
         console.print(
             Panel(
-                Markdown(content),
-                title="🤖 Agent",
-                border_style="cyan",
-                box=box.ROUNDED,
+                f"[green]Created {len(files_created)} file(s):[/green]\n"
+                + "\n".join([f"  • {fn} ({lang})" for fn, lang, _ in files_created]),
+                border_style="green",
+                title="📦 Files Created",
             )
         )
-        messages.append({"role": "assistant", "content": content})
+
+    # Add to conversation history
+    messages.append({"role": "assistant", "content": content})
