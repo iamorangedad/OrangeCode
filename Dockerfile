@@ -1,4 +1,4 @@
-FROM nvcr.io/nvidia/l4t-pytorch:r35.4.1-pth2.0-runtime
+FROM dustynv/l4t-pytorch:r36.2.0
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
