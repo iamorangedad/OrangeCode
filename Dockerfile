@@ -5,5 +5,5 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel
-COPY requirements.txt .
+COPY requirements_rag.txt .
 RUN pip3 install --no-cache-dir -r requirements_rag.txt
