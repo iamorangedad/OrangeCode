@@ -1,30 +1,9 @@
-FROM python:3.10-slim
-
+FROM nvcr.io/nvidia/l4t-pytorch:r35.4.1-pth2.0-runtime
 WORKDIR /app
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    curl \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-pip \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
-
-# Copy requirements
-COPY requirements_context.txt .
-
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements_context.txt
-
-# Copy service code
-COPY context_service.py .
-
-# Create directories
-RUN mkdir -p /app/chroma_db /app/logs
-
-# Expose port
-EXPOSE 8000
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/ || exit 1
-
-# Run the service
-CMD ["python", "context_service.py"]
+RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir -r requirements_rag.txt
