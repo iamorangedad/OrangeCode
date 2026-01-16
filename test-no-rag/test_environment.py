@@ -41,7 +41,7 @@ def test_ollama_connection():
 
 def test_agent_files():
     """Test that agent files exist and are readable"""
-    required_files = ["agent_no_rag.py", "utils.py"]
+    required_files = ["../agent_no_rag.py", "utils.py"]
     for file in required_files:
         if Path(file).exists():
             print(f"✅ {file} found")
@@ -74,7 +74,7 @@ def main():
     if passed == total:
         print("🎉 All tests passed! Environment is ready.")
         print("\n🚀 To start the agent, run:")
-        print("   uv run python agent_no_rag.py")
+        print("   uv run python ../agent_no_rag.py")
     else:
         print("⚠️  Some tests failed. Check the issues above.")
         sys.exit(1)

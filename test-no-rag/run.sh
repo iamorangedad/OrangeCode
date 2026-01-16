@@ -13,4 +13,4 @@ echo "💬 To quit: type 'quit' or 'exit'"
 echo ""
 
 # Run the agent
-uv run python agent_no_rag.py
+uv run python ../agent_no_rag.py

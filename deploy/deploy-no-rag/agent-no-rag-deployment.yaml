@@ -20,17 +20,24 @@ spec:
       nodeSelector:
         kubernetes.io/hostname: ubuntu
       initContainers:
-      - name: install-deps
+      - name: setup-agent
         image: python:3.11-slim
         volumeMounts:
         - name: agent-scripts
           mountPath: /app
+        - name: source-code
+          mountPath: /app/source
         command: ["sh", "-c"]
         args:
         - |
+          # Install dependencies
           pip3 install --no-cache-dir --upgrade pip &&
-          pip3 install --no-cache-dir ollama==0.1.6 rich==13.7.0 requests==2.31.0 &&
-          echo "Dependencies installed successfully"
+          pip3 install --no-cache-dir ollama==0.6.1 rich==14.2.0 requests==2.32.5 &&
+          
+          # Copy agent files from source
+          cp /app/source/agent_no_rag.py /app/ &&
+          cp /app/source/utils.py /app/ &&
+          echo "✅ Agent setup completed successfully"
       containers:
       - name: agent-no-rag
         image: python:3.11-slim
@@ -38,7 +45,7 @@ spec:
         - name: PYTHONUNBUFFERED
           value: "1"
         - name: OLLAMA_HOST
-          value: "http://10.0.0.56:11434"
+          value: "http://10.0.0.55:11434"
         volumeMounts:
         - name: agent-scripts
           mountPath: /app
@@ -53,4 +60,8 @@ spec:
       volumes:
       - name: agent-scripts
         emptyDir: {}
+      - name: source-code
+        hostPath:
+          path: /Users/mac/Documents/Agent/OrangeCode  # Adjust this path for your environment
+          type: Directory
       restartPolicy: Always

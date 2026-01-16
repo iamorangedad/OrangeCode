@@ -31,7 +31,7 @@ echo "OLLAMA_HOST=http://10.0.0.55:11434" > .env
 
 ### 3. Run the Agent
 ```bash
-uv run python agent_no_rag.py
+uv run python ../agent_no_rag.py
 ```
 
 ## Testing
@@ -52,7 +52,7 @@ uv run python -c "import ollama; print(ollama.Client(host='http://10.0.0.55:1143
 
 ## Files
 
-- `agent_no_rag.py` - Main agent script
+- `../agent_no_rag.py` - Main agent script (shared from project root)
 - `utils.py` - Utility functions
 - `setup.py` - Environment setup script
 - `test_environment.py` - Environment validation script
