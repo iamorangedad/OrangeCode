@@ -33,7 +33,7 @@ The deployment consists of:
 
 ```bash
 # Deploy agent-no-rag
-kubectl apply -k deploy-no-rag/k8s/
+kubectl apply -k deploy/deploy-no-rag/
 
 # Check deployment status
 kubectl get all -n orange-code
@@ -86,7 +86,7 @@ for msg in conversation_history[-10:]:  # Change 10 to desired limit
 
 Then apply changes:
 ```bash
-kubectl apply -f deploy-no-rag/k8s/agent-config.yaml
+kubectl apply -f deploy/deploy-no-rag/agent-config.yaml
 kubectl rollout restart deployment/agent-no-rag -n orange-code
 ```
 
@@ -178,7 +178,7 @@ kubectl rollout restart deployment/agent-no-rag -n orange-code
 ### Update Agent Code
 
 1. Edit `agent-config.yaml` with new code
-2. Apply changes: `kubectl apply -f deploy-no-rag/k8s/agent-config.yaml`
+2. Apply changes: `kubectl apply -f deploy/deploy-no-rag/agent-config.yaml`
 3. Restart deployment: `kubectl rollout restart deployment/agent-no-rag -n orange-code`
 
 ### Scale Deployment
@@ -211,7 +211,7 @@ kubectl delete namespace orange-code
 # Test locally before deployment
 python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements_agent.txt
+pip install ollama rich requests
 python3 agent_no_rag.py
 ```
 
@@ -222,9 +222,8 @@ If you prefer building an image instead of using ConfigMap:
 ```dockerfile
 FROM python:3.11-slim
 WORKDIR /app
-COPY requirements_agent.txt .
-RUN pip install -r requirements_agent.txt
 COPY agent_no_rag.py utils.py .
+RUN pip install ollama rich requests
 CMD ["python3", "agent_no_rag.py"]
 ```
 
@@ -248,7 +247,7 @@ Then update deployment to use your image.
 
 | Aspect | No-RAG (This) | RAG Version |
 |--------|---------------|-------------|
-| **Setup Complexity** | Simple (3 manifests) | Complex (7 manifests) |
+| **Setup Complexity** | Simple (6 manifests) | Complex (7 manifests) |
 | **Resource Usage** | Low (75% less) | High |
 | **Response Time** | Fast (no context retrieval) | Slower (embedding + search) |
 | **Memory** | Session-only | Persistent |
