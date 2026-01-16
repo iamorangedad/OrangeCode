@@ -12,17 +12,13 @@ from rich.syntax import Syntax
 from rich.markdown import Markdown
 from rich.table import Table
 from rich import box
-from rag.context_client import ContextClient
 from utils import read_file, write_file, list_files, execute_command
 
 # Initialize Rich console
 console = Console()
 
-# context service
-CONTEXT_SERVICE_URL = os.getenv("CONTEXT_SERVICE_URL", "http://10.0.0.56:8000")
-SESSION_ID = str(uuid.uuid4())
-MAX_CONTEXT_ITEMS = 5  # Number of relevant context items to retrieve
-context_client = ContextClient(CONTEXT_SERVICE_URL, SESSION_ID)
+# In-memory conversation history
+conversation_history = []
 
 
 def run_command(command):
@@ -41,16 +37,8 @@ def run_command(command):
     execute_command(command)
 
 
-def build_context_aware_prompt(user_query: str) -> str:
-    """Build prompt with relevant context from RAG"""
-
-    # Get relevant context
-    relevant_contexts = context_client.query_relevant_context(
-        user_query, top_k=MAX_CONTEXT_ITEMS
-    )
-
-    # Get recent context for continuity
-    recent_contexts = context_client.get_recent_context(limit=3)
+def build_history_aware_prompt(user_query: str) -> str:
+    """Build prompt with conversation history"""
 
     prompt_parts = [
         "You are an autonomous coding agent with access to conversation history.",
@@ -66,34 +54,16 @@ def build_context_aware_prompt(user_query: str) -> str:
         4. run_command: Executes a shell command. Args: command (string)
 
         When using a tool, output ONLY JSON format:
-        {"tool": "tool_name", "args": {"arg_name": "value"}} 
+        {"tool": "tool_name", "args": {"arg_name": "value"}}
     """
     )
 
-    # Add relevant historical context
-    if relevant_contexts:
-        prompt_parts.append("\n--- RELEVANT CONTEXT FROM HISTORY ---")
-        for ctx in relevant_contexts[:3]:  # Limit to top 3
-            content_preview = (
-                ctx["content"][:200] + "..."
-                if len(ctx["content"]) > 200
-                else ctx["content"]
-            )
-            prompt_parts.append(
-                f"[{ctx['metadata'].get('type', 'unknown')}] {content_preview}"
-            )
-
-    # Add recent conversation for continuity
-    if recent_contexts:
-        prompt_parts.append("\n--- RECENT CONVERSATION ---")
-        for ctx in reversed(recent_contexts):  # Chronological order
-            role = ctx["metadata"].get("role", "unknown")
-            content_preview = (
-                ctx["content"][:150] + "..."
-                if len(ctx["content"]) > 150
-                else ctx["content"]
-            )
-            prompt_parts.append(f"{role}: {content_preview}")
+    # Add conversation history
+    if conversation_history:
+        prompt_parts.append("\n--- CONVERSATION HISTORY ---")
+        for msg in conversation_history[-10:]:  # Last 10 messages
+            role = msg["role"]
+            prompt_parts.append(f"{role}: {msg['content']}")
 
     # Add current query
     prompt_parts.append(f"\n--- CURRENT REQUEST ---\nUser: {user_query}")
@@ -104,9 +74,7 @@ def build_context_aware_prompt(user_query: str) -> str:
 console.clear()
 console.print(
     Panel.fit(
-        "[bold cyan]RAG-Enhanced Autonomous Coding Agent[/bold cyan]\n"
-        f"[dim]Session ID: {SESSION_ID[:8]}...[/dim]\n"
-        f"[dim]Context Service: {CONTEXT_SERVICE_URL}[/dim]",
+        "[bold cyan]Autonomous Coding Agent[/bold cyan]",
         border_style="cyan",
         box=box.DOUBLE,
     )
@@ -119,62 +87,40 @@ tools_table.add_row("write_file", "Write content to a file")
 tools_table.add_row("list_files", "List files in current directory")
 tools_table.add_row("run_command", "Execute shell commands")
 console.print(tools_table)
-with console.status("[bold cyan]Connecting to context service...[/bold cyan]"):
-    try:
-        response = requests.get(f"{CONTEXT_SERVICE_URL}/", timeout=3)
-        if response.ok:
-            console.print("[bold green]✓[/bold green] Context service connected")
-        else:
-            console.print(
-                "[bold yellow]⚠[/bold yellow] Context service unavailable (running in degraded mode)"
-            )
-    except:
-        console.print(
-            "[bold yellow]⚠[/bold yellow] Context service unavailable (running in degraded mode)"
-        )
 console.print(
-    "\n[dim]Commands: 'quit'/'exit' to stop, 'stats' for session stats, 'clear' to clear context[/dim]\n"
+    "\n[dim]Commands: 'quit'/'exit' to stop, 'stats' for session stats, 'clear' to clear history[/dim]\n"
 )
 
 while True:
-    client = ollama.Client(host="http://10.0.0.56:11434")
+    client = ollama.Client(host=os.getenv("OLLAMA_HOST", "http://10.0.0.56:11434"))
     user_input = Prompt.ask("\n[bold green]You[/bold green]")
     if user_input.lower() in ["quit", "exit"]:
-        stats = context_client.get_stats()
-        if stats:
-            console.print(
-                Panel(
-                    f"Session ended\nTotal messages: {stats.get('total_messages', 0)}",
-                    border_style="yellow",
-                )
+        console.print(
+            Panel(
+                f"Session ended\nTotal messages: {len(conversation_history)}",
+                border_style="yellow",
             )
+        )
         console.print(
             Panel("[bold yellow]Goodbye! 👋[/bold yellow]", border_style="yellow")
         )
         break
     if user_input.lower() == "stats":
-        stats = context_client.get_stats()
-        if stats:
-            stats_table = Table(title=f"Session Statistics", box=box.ROUNDED)
-            stats_table.add_column("Metric", style="cyan")
-            stats_table.add_column("Value", style="white")
-            stats_table.add_row("Total Messages", str(stats.get("total_messages", 0)))
-            for msg_type, count in stats.get("by_type", {}).items():
-                stats_table.add_row(f"  {msg_type}", str(count))
-            console.print(stats_table)
+        stats_table = Table(title=f"Session Statistics", box=box.ROUNDED)
+        stats_table.add_column("Metric", style="cyan")
+        stats_table.add_column("Value", style="white")
+        stats_table.add_row("Total Messages", str(len(conversation_history)))
+        console.print(stats_table)
         continue
     if user_input.lower() == "clear":
-        if Confirm.ask("Clear all context for this session?", default=False):
-            requests.post(
-                f"{CONTEXT_SERVICE_URL}/context/clear", json={"session_id": SESSION_ID}
-            )
-            console.print("[bold green]Context cleared[/bold green]")
+        if Confirm.ask("Clear all history for this session?", default=False):
+            conversation_history = []
+            console.print("[bold green]History cleared[/bold green]")
         continue
-    context_client.add_message("user", user_input, {"type": "user_query"})
-    context_prompt = build_context_aware_prompt(user_input)
-    with console.status(
-        "[bold cyan]Agent is thinking (with context)...[/bold cyan]", spinner="dots"
-    ):
+    conversation_history.append({"role": "user", "content": user_input})
+    conversation_history = conversation_history[-10:]
+    context_prompt = build_history_aware_prompt(user_input)
+    with console.status("[bold cyan]Agent is thinking...[/bold cyan]", spinner="dots"):
         try:
             response = client.chat(
                 model="qwen2.5-coder:3b",
@@ -217,10 +163,9 @@ while True:
                 )
             )
 
-            # Store tool call in context
-            context_client.add_message(
-                "assistant", content, {"type": "tool_call", "tool_name": tool_name}
-            )
+            # Store tool call in history
+            conversation_history.append({"role": "assistant", "content": content})
+            conversation_history = conversation_history[-10:]
 
             # Execute tool
             result = "Error: Tool not found"
@@ -234,27 +179,29 @@ while True:
                 result = run_command(args.get("command"))
 
             # Display result
-            if result.startswith("Error"):
+            if result and result.startswith("Error"):
                 console.print(Panel(result, border_style="red", title="❌ Error"))
             else:
                 console.print(
                     Panel(
-                        result[:500] + ("..." if len(result) > 500 else ""),
+                        (result or "")[:500]
+                        + ("..." if len(result or "") > 500 else ""),
                         border_style="green",
                         title="✅ Result",
                     )
                 )
 
             # Store tool result
-            context_client.add_message(
-                "system",
-                f"Tool '{tool_name}' result: {result}",
-                {"type": "tool_result", "tool_name": tool_name},
+            conversation_history.append(
+                {"role": "system", "content": f"Tool '{tool_name}' result: {result}"}
             )
+            conversation_history = conversation_history[-10:]
 
-            # Get final interpretation with context
-            final_prompt = build_context_aware_prompt(
-                f"Interpret the result of {tool_name}: {result[:200]}"
+            # Get final interpretation with history
+            final_prompt = build_history_aware_prompt(
+                f"Interpret the result of {tool_name}: {(result or '')[:200]}"
+                if result
+                else "Tool failed"
             )
 
             with console.status("[bold cyan]Interpreting results...[/bold cyan]"):
@@ -278,9 +225,8 @@ while True:
             )
 
             # Store final response
-            context_client.add_message(
-                "assistant", final_content, {"type": "agent_response"}
-            )
+            conversation_history.append({"role": "assistant", "content": final_content})
+            conversation_history = conversation_history[-10:]
 
         except json.JSONDecodeError:
             console.print(
@@ -303,5 +249,6 @@ while True:
             )
         )
 
-        # Store response in context
-        context_client.add_message("assistant", content, {"type": "agent_response"})
+        # Store response in history
+        conversation_history.append({"role": "assistant", "content": content})
+        conversation_history = conversation_history[-10:]

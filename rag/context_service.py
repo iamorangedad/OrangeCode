@@ -16,16 +16,13 @@ from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
 
 app = FastAPI(title="Code Agent Context Service", version="1.0.0")
-
-# Initialize ChromaDB
 chroma_client = chromadb.PersistentClient(
     path="./chroma_db", settings=Settings(anonymized_telemetry=False)
 )
 
-# Initialize embedding model
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Create or get collection
+
 try:
     collection = chroma_client.get_collection(name="agent_context")
 except:
@@ -33,9 +30,6 @@ except:
         name="agent_context",
         metadata={"description": "Code agent conversation history"},
     )
-# =================================================================
-# ==================== Request/Response Models ====================
-# =================================================================
 
 
 class Message(BaseModel):
@@ -66,11 +60,6 @@ class ClearContextRequest(BaseModel):
     session_id: str
 
 
-# =================================================================
-# ==================== Helper Functions ===========================
-# =================================================================
-
-
 def generate_id(session_id: str, content: str, timestamp: str) -> str:
     """Generate unique ID for each context entry"""
     raw = f"{session_id}_{content}_{timestamp}"
@@ -80,8 +69,6 @@ def generate_id(session_id: str, content: str, timestamp: str) -> str:
 def extract_metadata(message: Message, session_id: str) -> Dict[str, Any]:
     """Extract metadata from message"""
     metadata = message.metadata or {}
-
-    # Detect message type
     msg_type = "chat"
     if message.role == "user":
         msg_type = "user_query"
@@ -89,7 +76,6 @@ def extract_metadata(message: Message, session_id: str) -> Dict[str, Any]:
         msg_type = "tool_call"
     elif message.role == "assistant":
         msg_type = "agent_response"
-
     metadata.update(
         {
             "session_id": session_id,
@@ -107,15 +93,8 @@ def compress_long_content(content: str, max_length: int = 1000) -> str:
     """Compress overly long content for embedding"""
     if len(content) <= max_length:
         return content
-
-    # Keep beginning and end
     half = max_length // 2
     return f"{content[:half]}\n... [content truncated] ...\n{content[-half:]}"
-
-
-# =================================================================
-# ==================== API Endpoints ===========================
-# =================================================================
 
 
 @app.get("/")
@@ -134,30 +113,20 @@ async def add_context(request: AddContextRequest):
     try:
         timestamp = request.message.timestamp or datetime.now().isoformat()
         doc_id = generate_id(request.session_id, request.message.content, timestamp)
-
-        # Extract metadata
         metadata = extract_metadata(request.message, request.session_id)
-
-        # Compress content if too long
         content_for_embedding = compress_long_content(request.message.content)
-
-        # Generate embedding
         embedding = embedding_model.encode(content_for_embedding).tolist()
-
-        # Add to ChromaDB
         collection.add(
             ids=[doc_id],
             embeddings=[embedding],
             documents=[request.message.content],
             metadatas=[metadata],
         )
-
         return {
             "status": "success",
             "id": doc_id,
             "message": "Context added successfully",
         }
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error adding context: {str(e)}")
 
@@ -166,22 +135,15 @@ async def add_context(request: AddContextRequest):
 async def query_context(request: QueryContextRequest) -> ContextResponse:
     """Query relevant context using semantic search"""
     try:
-        # Generate query embedding
         query_embedding = embedding_model.encode(request.query).tolist()
-
-        # Build filter
         where_filter = {"session_id": request.session_id}
         if request.filter_by_type:
             where_filter["type"] = request.filter_by_type
-
-        # Query ChromaDB
         results = collection.query(
             query_embeddings=[query_embedding],
             n_results=min(request.top_k, 20),
             where=where_filter,
         )
-
-        # Format results
         messages = []
         if results["ids"] and len(results["ids"][0]) > 0:
             for i in range(len(results["ids"][0])):
@@ -197,9 +159,7 @@ async def query_context(request: QueryContextRequest) -> ContextResponse:
                         ),
                     }
                 )
-
         return ContextResponse(messages=messages, total_count=len(messages))
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error querying context: {str(e)}")
 
@@ -208,13 +168,9 @@ async def query_context(request: QueryContextRequest) -> ContextResponse:
 async def get_recent_context(session_id: str, limit: int = 10, offset: int = 0):
     """Get recent messages in chronological order"""
     try:
-        # Get all messages for session
         results = collection.get(where={"session_id": session_id}, limit=limit + offset)
-
         if not results["ids"]:
             return ContextResponse(messages=[], total_count=0)
-
-        # Sort by timestamp
         messages_with_time = []
         for i in range(len(results["ids"])):
             messages_with_time.append(
@@ -225,14 +181,9 @@ async def get_recent_context(session_id: str, limit: int = 10, offset: int = 0):
                     "timestamp": results["metadatas"][i].get("timestamp", ""),
                 }
             )
-
         messages_with_time.sort(key=lambda x: x["timestamp"], reverse=True)
-
-        # Apply offset and limit
         paginated = messages_with_time[offset : offset + limit]
-
         return ContextResponse(messages=paginated, total_count=len(messages_with_time))
-
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Error getting recent context: {str(e)}"
@@ -243,14 +194,10 @@ async def get_recent_context(session_id: str, limit: int = 10, offset: int = 0):
 async def clear_context(request: ClearContextRequest):
     """Clear all context for a session"""
     try:
-        # Get all IDs for the session
         results = collection.get(where={"session_id": request.session_id})
-
         if results["ids"]:
             collection.delete(ids=results["ids"])
-
         return {"status": "success", "deleted_count": len(results["ids"])}
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error clearing context: {str(e)}")
 
@@ -260,11 +207,8 @@ async def get_context_stats(session_id: str):
     """Get statistics for a session"""
     try:
         results = collection.get(where={"session_id": session_id})
-
         if not results["ids"]:
             return {"session_id": session_id, "total_messages": 0, "by_type": {}}
-
-        # Count by type
         type_counts = {}
         for metadata in results["metadatas"]:
             msg_type = metadata.get("type", "unknown")

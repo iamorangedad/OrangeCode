@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-config
+  namespace: orange-code
+  labels:
+    app: agent-no-rag
+    component: agent
+data:
+  requirements_no_rag.txt: |
+    # requirements_no_rag.txt - No-RAG Agent Dependencies
+    ollama==0.6.1
+    rich==14.2.0
+    requests==2.32.5
+  setup.sh: |
+    #!/bin/bash
+    # Setup script for no-RAG agent
+    
+    # Install dependencies
+    pip install -r /app/requirements_no_rag.txt
+    
+    # Copy agent files from mounted volume (shared source)
+    if [ -d "/app/source" ]; then
+      cp /app/source/agent_no_rag.py /app/
+      cp /app/source/utils.py /app/
+      echo "✅ Agent files copied from source volume"
+    fi
