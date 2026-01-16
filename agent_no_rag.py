@@ -63,7 +63,7 @@ def build_history_aware_prompt(user_query: str) -> str:
         prompt_parts.append("\n--- CONVERSATION HISTORY ---")
         for msg in conversation_history[-10:]:  # Last 10 messages
             role = msg["role"]
-        prompt_parts.append(f"{role}: {msg['content']}")
+            prompt_parts.append(f"{role}: {msg['content']}")
 
     # Add current query
     prompt_parts.append(f"\n--- CURRENT REQUEST ---\nUser: {user_query}")
@@ -92,7 +92,7 @@ console.print(
 )
 
 while True:
-    client = ollama.Client(host="http://10.0.0.56:11434")
+    client = ollama.Client(host=os.getenv("OLLAMA_HOST", "http://10.0.0.56:11434"))
     user_input = Prompt.ask("\n[bold green]You[/bold green]")
     if user_input.lower() in ["quit", "exit"]:
         console.print(
