@@ -1,8 +1,3 @@
-"""
-Enhanced Code Agent with RAG Context Management
-Integrates with context microservice for intelligent history retrieval
-"""
-
 import os
 import json
 import subprocess
@@ -17,119 +12,17 @@ from rich.syntax import Syntax
 from rich.markdown import Markdown
 from rich.table import Table
 from rich import box
+from rag.context_client import ContextClient
+from utils import read_file, write_file, list_files, execute_command
 
 # Initialize Rich console
 console = Console()
 
-# Configuration
-CONTEXT_SERVICE_URL = os.getenv("CONTEXT_SERVICE_URL", "http://localhost:8000")
+# context service
+CONTEXT_SERVICE_URL = os.getenv("CONTEXT_SERVICE_URL", "http://10.0.0.56:8000")
 SESSION_ID = str(uuid.uuid4())
 MAX_CONTEXT_ITEMS = 5  # Number of relevant context items to retrieve
-
-
-# =================================================================
-# ==================== Context Service Client =====================
-# =================================================================
-class ContextClient:
-    """Client for interacting with context management service"""
-
-    def __init__(self, base_url: str, session_id: str):
-        self.base_url = base_url
-        self.session_id = session_id
-
-    def add_message(self, role: str, content: str, metadata: dict = None):
-        """Add a message to context storage"""
-        try:
-            response = requests.post(
-                f"{self.base_url}/context/add",
-                json={
-                    "session_id": self.session_id,
-                    "message": {
-                        "role": role,
-                        "content": content,
-                        "timestamp": datetime.now().isoformat(),
-                        "metadata": metadata or {},
-                    },
-                },
-                timeout=5,
-            )
-            return response.json() if response.ok else None
-        except Exception as e:
-            console.print(f"[dim red]Context service error: {e}[/dim red]")
-            return None
-
-    def query_relevant_context(self, query: str, top_k: int = 5):
-        """Query relevant context based on semantic similarity"""
-        try:
-            response = requests.post(
-                f"{self.base_url}/context/query",
-                json={"session_id": self.session_id, "query": query, "top_k": top_k},
-                timeout=5,
-            )
-            if response.ok:
-                return response.json()["messages"]
-            return []
-        except Exception as e:
-            console.print(f"[dim red]Context query error: {e}[/dim red]")
-            return []
-
-    def get_recent_context(self, limit: int = 5):
-        """Get recent conversation history"""
-        try:
-            response = requests.post(
-                f"{self.base_url}/context/recent",
-                params={"session_id": self.session_id, "limit": limit},
-                timeout=5,
-            )
-            if response.ok:
-                return response.json()["messages"]
-            return []
-        except Exception as e:
-            console.print(f"[dim red]Recent context error: {e}[/dim red]")
-            return []
-
-    def get_stats(self):
-        """Get session statistics"""
-        try:
-            response = requests.get(
-                f"{self.base_url}/context/stats/{self.session_id}", timeout=5
-            )
-            return response.json() if response.ok else None
-        except Exception as e:
-            return None
-
-
-# Initialize context client
 context_client = ContextClient(CONTEXT_SERVICE_URL, SESSION_ID)
-
-
-# =================================================================
-# ==================== Tool Functions =============================
-# =================================================================
-def read_file(path):
-    """Read file content with error handling"""
-    try:
-        if not os.path.exists(path):
-            return "Error: File not found."
-        with open(path, "r", encoding="utf-8") as f:
-            return f.read()
-    except Exception as e:
-        return f"Error reading file: {str(e)}"
-
-
-def write_file(path, content):
-    """Write content to file with error handling"""
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(content)
-        return f"Success: File '{path}' written successfully."
-    except Exception as e:
-        return f"Error writing file: {str(e)}"
-
-
-def list_files():
-    """List files in current directory"""
-    return str(os.listdir("."))
 
 
 def run_command(command):
@@ -142,26 +35,12 @@ def run_command(command):
             box=box.ROUNDED,
         )
     )
-
     confirm = Confirm.ask("Allow execution?", default=False)
     if not confirm:
         return "Error: User denied command execution."
-
-    try:
-        result = subprocess.run(
-            command, shell=True, capture_output=True, text=True, timeout=30
-        )
-        output = f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
-        return output
-    except subprocess.TimeoutExpired:
-        return "Error: Command timed out."
-    except Exception as e:
-        return f"Error executing command: {str(e)}"
+    execute_command(command)
 
 
-# =================================================================
-# ==================== Context-Aware Prompt Builder ===============
-# =================================================================
 def build_context_aware_prompt(user_query: str) -> str:
     """Build prompt with relevant context from RAG"""
 
@@ -222,9 +101,6 @@ def build_context_aware_prompt(user_query: str) -> str:
     return "\n".join(prompt_parts)
 
 
-# =================================================================
-# ==================== Display Welcome Screen =====================
-# =================================================================
 console.clear()
 console.print(
     Panel.fit(
@@ -235,8 +111,6 @@ console.print(
         box=box.DOUBLE,
     )
 )
-
-# Display available tools
 tools_table = Table(title="Available Tools", box=box.ROUNDED, border_style="green")
 tools_table.add_column("Tool", style="cyan", no_wrap=True)
 tools_table.add_column("Description", style="white")
@@ -245,8 +119,6 @@ tools_table.add_row("write_file", "Write content to a file")
 tools_table.add_row("list_files", "List files in current directory")
 tools_table.add_row("run_command", "Execute shell commands")
 console.print(tools_table)
-
-# Check context service connection
 with console.status("[bold cyan]Connecting to context service...[/bold cyan]"):
     try:
         response = requests.get(f"{CONTEXT_SERVICE_URL}/", timeout=3)
@@ -260,22 +132,13 @@ with console.status("[bold cyan]Connecting to context service...[/bold cyan]"):
         console.print(
             "[bold yellow]⚠[/bold yellow] Context service unavailable (running in degraded mode)"
         )
-
 console.print(
     "\n[dim]Commands: 'quit'/'exit' to stop, 'stats' for session stats, 'clear' to clear context[/dim]\n"
 )
 
-
-# =================================================================
-# ============================= Main Loop =========================
-# =================================================================
 while True:
-    client = ollama.Client(host="http://10.0.0.26:11434")
-
-    # Get user input
+    client = ollama.Client(host="http://10.0.0.56:11434")
     user_input = Prompt.ask("\n[bold green]You[/bold green]")
-
-    # Handle special commands
     if user_input.lower() in ["quit", "exit"]:
         stats = context_client.get_stats()
         if stats:
@@ -289,7 +152,6 @@ while True:
             Panel("[bold yellow]Goodbye! 👋[/bold yellow]", border_style="yellow")
         )
         break
-
     if user_input.lower() == "stats":
         stats = context_client.get_stats()
         if stats:
@@ -301,7 +163,6 @@ while True:
                 stats_table.add_row(f"  {msg_type}", str(count))
             console.print(stats_table)
         continue
-
     if user_input.lower() == "clear":
         if Confirm.ask("Clear all context for this session?", default=False):
             requests.post(
@@ -309,14 +170,8 @@ while True:
             )
             console.print("[bold green]Context cleared[/bold green]")
         continue
-
-    # Store user message in context
     context_client.add_message("user", user_input, {"type": "user_query"})
-
-    # Build context-aware prompt
     context_prompt = build_context_aware_prompt(user_input)
-
-    # Get LLM response
     with console.status(
         "[bold cyan]Agent is thinking (with context)...[/bold cyan]", spinner="dots"
     ):
@@ -331,7 +186,6 @@ while True:
         except Exception as e:
             console.print(f"[bold red]Ollama Error:[/bold red] {e}")
             continue
-
     content = response["message"]["content"]
 
     # --- Tool Detection & Execution ---
