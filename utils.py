@@ -2,6 +2,45 @@ import os
 import re
 
 
+def read_file(path):
+    """Read file content with error handling"""
+    try:
+        if not os.path.exists(path):
+            return "Error: File not found."
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        return f"Error reading file: {str(e)}"
+
+
+def write_file(path, content):
+    """Write content to file with error handling"""
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return f"Success: File '{path}' written successfully."
+    except Exception as e:
+        return f"Error writing file: {str(e)}"
+
+
+def list_files():
+    """List files in current directory"""
+    return str(os.listdir("."))
+
+
+def execute_command(command):
+    try:
+        result = subprocess.run(
+            command, shell=True, capture_output=True, text=True, timeout=30
+        )
+        output = f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+        return output
+    except subprocess.TimeoutExpired:
+        return "Error: Command timed out."
+    except Exception as e:
+        return f"Error executing command: {str(e)}"
+
+
 def extract_filename_from_code(code, language):
     """Extract meaningful filename from code content based on business logic"""
     code_lower = code.lower()
