@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-no-rag
+  namespace: orange-code
+  labels:
+    app: agent-no-rag
+    component: agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-no-rag
+  template:
+    metadata:
+      labels:
+        app: agent-no-rag
+        component: agent
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: ubuntu
+      initContainers:
+      - name: install-deps
+        image: python:3.11-slim
+        volumeMounts:
+        - name: agent-scripts
+          mountPath: /app
+        command: ["sh", "-c"]
+        args:
+        - |
+          pip3 install --no-cache-dir --upgrade pip &&
+          pip3 install --no-cache-dir ollama==0.1.6 rich==13.7.0 requests==2.31.0 &&
+          echo "Dependencies installed successfully"
+      containers:
+      - name: agent-no-rag
+        image: python:3.11-slim
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: OLLAMA_HOST
+          value: "http://10.0.0.56:11434"
+        volumeMounts:
+        - name: agent-scripts
+          mountPath: /app
+        command: ["python3", "/app/agent_no_rag.py"]
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+      volumes:
+      - name: agent-scripts
+        emptyDir: {}
+      restartPolicy: Always

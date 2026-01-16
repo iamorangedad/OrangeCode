@@ -1,0 +1,414 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-config
+  namespace: orange-code
+  labels:
+    app: agent-no-rag
+    component: agent
+data:
+  agent_no_rag.py: |
+    import os
+    import json
+    import subprocess
+    import ollama
+    import requests
+    import uuid
+    from datetime import datetime
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.prompt import Prompt, Confirm
+    from rich.syntax import Syntax
+    from rich.markdown import Markdown
+    from rich.table import Table
+    from rich import box
+    from utils import read_file, write_file, list_files, execute_command
+
+    # Initialize Rich console
+    console = Console()
+
+    # In-memory conversation history
+    conversation_history = []
+
+
+    def run_command(command):
+        """Execute shell command with safety confirmation"""
+        console.print(
+            Panel(
+                f"[yellow]Command:[/yellow] [cyan]{command}[/cyan]",
+                title="⚠️  Safety Check",
+                border_style="yellow",
+                box=box.ROUNDED,
+            )
+        )
+        confirm = Confirm.ask("Allow execution?", default=False)
+        if not confirm:
+            return "Error: User denied command execution."
+        execute_command(command)
+
+
+    def build_history_aware_prompt(user_query: str) -> str:
+        """Build prompt with conversation history"""
+
+        prompt_parts = [
+            "You are an autonomous coding agent with access to conversation history.",
+            "\n--- TOOLS AVAILABLE ---",
+        ]
+
+        # Add tool descriptions
+        prompt_parts.append(
+            """
+            1. read_file: Reads the content of a file. Args: path (string)
+            2. write_file: Writes content to a file. Args: path (string), content (string)
+            3. list_files: Lists files in the current directory. No args.
+            4. run_command: Executes a shell command. Args: command (string)
+
+            When using a tool, output ONLY JSON format:
+            {"tool": "tool_name", "args": {"arg_name": "value"}}
+        """
+        )
+
+        # Add conversation history
+        if conversation_history:
+            prompt_parts.append("\n--- CONVERSATION HISTORY ---")
+            for msg in conversation_history[-10:]:  # Last 10 messages
+                role = msg["role"]
+                prompt_parts.append(f"{role}: {msg['content']}")
+
+        # Add current query
+        prompt_parts.append(f"\n--- CURRENT REQUEST ---\nUser: {user_query}")
+
+        return "\n".join(prompt_parts)
+
+
+    console.clear()
+    console.print(
+        Panel.fit(
+            "[bold cyan]Autonomous Coding Agent[/bold cyan]",
+            border_style="cyan",
+            box=box.DOUBLE,
+        )
+    )
+    tools_table = Table(title="Available Tools", box=box.ROUNDED, border_style="green")
+    tools_table.add_column("Tool", style="cyan", no_wrap=True)
+    tools_table.add_column("Description", style="white")
+    tools_table.add_row("read_file", "Read content from a file")
+    tools_table.add_row("write_file", "Write content to a file")
+    tools_table.add_row("list_files", "List files in current directory")
+    tools_table.add_row("run_command", "Execute shell commands")
+    console.print(tools_table)
+    console.print(
+        "\n[dim]Commands: 'quit'/'exit' to stop, 'stats' for session stats, 'clear' to clear history[/dim]\n"
+    )
+
+    while True:
+        client = ollama.Client(host=os.getenv("OLLAMA_HOST", "http://10.0.0.56:11434"))
+        user_input = Prompt.ask("\n[bold green]You[/bold green]")
+        if user_input.lower() in ["quit", "exit"]:
+            console.print(
+                Panel(
+                    f"Session ended\nTotal messages: {len(conversation_history)}",
+                    border_style="yellow",
+                )
+            )
+            console.print(
+                Panel("[bold yellow]Goodbye! 👋[/bold yellow]", border_style="yellow")
+            )
+            break
+        if user_input.lower() == "stats":
+            stats_table = Table(title=f"Session Statistics", box=box.ROUNDED)
+            stats_table.add_column("Metric", style="cyan")
+            stats_table.add_column("Value", style="white")
+            stats_table.add_row("Total Messages", str(len(conversation_history)))
+            console.print(stats_table)
+            continue
+        if user_input.lower() == "clear":
+            if Confirm.ask("Clear all history for this session?", default=False):
+                conversation_history = []
+                console.print("[bold green]History cleared[/bold green]")
+            continue
+        conversation_history.append({"role": "user", "content": user_input})
+        conversation_history = conversation_history[-10:]
+        context_prompt = build_history_aware_prompt(user_input)
+        with console.status("[bold cyan]Agent is thinking...[/bold cyan]", spinner="dots"):
+            try:
+                response = client.chat(
+                    model="qwen2.5-coder:0.5b",
+                    messages=[
+                        {"role": "system", "content": context_prompt},
+                        {"role": "user", "content": user_input},
+                    ],
+                )
+            except Exception as e:
+                console.print(f"[bold red]Ollama Error:[/bold red] {e}")
+                continue
+        content = response["message"]["content"]
+
+        # --- Tool Detection & Execution ---
+        if '{"tool":' in content:
+            try:
+                # Parse JSON
+                json_str = content
+                if "```json" in content:
+                    json_str = content.split("```json")[1].split("```")[0]
+                elif "```" in content:
+                    json_str = content.split("```")[1].split("```")[0]
+
+                start_idx = json_str.find("{")
+                end_idx = json_str.rfind("}") + 1
+                clean_json = json_str[start_idx:end_idx]
+
+                parsed_json = json.loads(clean_json)
+                tool_name = parsed_json.get("tool")
+                args = parsed_json.get("args", {})
+
+                # Display tool call
+                console.print(
+                    Panel(
+                        f"[yellow]Tool:[/yellow] [bold cyan]{tool_name}[/bold cyan]\n"
+                        f"[yellow]Args:[/yellow] {json.dumps(args, indent=2)}",
+                        title="🔧 Tool Execution",
+                        border_style="blue",
+                        box=box.ROUNDED,
+                    )
+                )
+
+                # Store tool call in history
+                conversation_history.append({"role": "assistant", "content": content})
+                conversation_history = conversation_history[-10:]
+
+                # Execute tool
+                result = "Error: Tool not found"
+                if tool_name == "read_file":
+                    result = read_file(args.get("path"))
+                elif tool_name == "write_file":
+                    result = write_file(args.get("path"), args.get("content"))
+                elif tool_name == "list_files":
+                    result = list_files()
+                elif tool_name == "run_command":
+                    result = run_command(args.get("command"))
+
+                # Display result
+                if result and result.startswith("Error"):
+                    console.print(Panel(result, border_style="red", title="❌ Error"))
+                else:
+                    console.print(
+                        Panel(
+                            (result or "")[:500]
+                            + ("..." if len(result or "") > 500 else ""),
+                            border_style="green",
+                            title="✅ Result",
+                        )
+                    )
+
+                # Store tool result
+                conversation_history.append(
+                    {"role": "system", "content": f"Tool '{tool_name}' result: {result}"}
+                )
+                conversation_history = conversation_history[-10:]
+
+                # Get final interpretation with history
+                final_prompt = build_history_aware_prompt(
+                    f"Interpret the result of {tool_name}: {(result or '')[:200]}"
+                    if result
+                    else "Tool failed"
+                )
+
+                with console.status("[bold cyan]Interpreting results...[/bold cyan]"):
+                    final_response = client.chat(
+                        model="qwen2.5-coder:0.5b",
+                        messages=[
+                            {"role": "system", "content": final_prompt},
+                            {"role": "user", "content": f"Tool result: {result}"},
+                        ],
+                    )
+                    final_content = final_response["message"]["content"]
+
+                # Display agent response
+                console.print(
+                    Panel(
+                        Markdown(final_content),
+                        title="🤖 Agent Response",
+                        border_style="cyan",
+                        box=box.ROUNDED,
+                    )
+                )
+
+                # Store final response
+                conversation_history.append({"role": "assistant", "content": final_content})
+                conversation_history = conversation_history[-10:]
+
+            except json.JSONDecodeError:
+                console.print(
+                    "[bold red]System:[/bold red] Failed to parse tool call JSON."
+                )
+                console.print(
+                    Panel(
+                        content, title="Raw Output", border_style="yellow", box=box.ROUNDED
+                    )
+                )
+
+        else:
+            # No tool called, display normal chat response
+            console.print(
+                Panel(
+                    Markdown(content),
+                    title="🤖 Agent",
+                    border_style="cyan",
+                    box=box.ROUNDED,
+                )
+            )
+
+            # Store response in history
+            conversation_history.append({"role": "assistant", "content": content})
+            conversation_history = conversation_history[-10:]
+  utils.py: |
+    import os
+    import subprocess
+    import re
+
+
+    def read_file(path):
+        """Read file content with error handling"""
+        try:
+            if not os.path.exists(path):
+                return "Error: File not found."
+            with open(path, "r", encoding="utf-8") as f:
+                return f.read()
+        except Exception as e:
+            return f"Error reading file: {str(e)}"
+
+
+    def write_file(path, content):
+        """Write content to file with error handling"""
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            return f"Success: File '{path}' written successfully."
+        except Exception as e:
+            return f"Error writing file: {str(e)}"
+
+
+    def list_files():
+        """List files in current directory"""
+        return str(os.listdir("."))
+
+
+    def execute_command(command):
+        try:
+            result = subprocess.run(
+                command, shell=True, capture_output=True, text=True, timeout=30
+            )
+            output = f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+            return output
+        except subprocess.TimeoutExpired:
+            return "Error: Command timed out."
+        except Exception as e:
+            return f"Error executing command: {str(e)}"
+
+
+    def extract_filename_from_code(code, language):
+        """Extract meaningful filename from code content based on business logic"""
+        code_lower = code.lower()
+
+        # Python naming patterns
+        if language in ["python", "py"]:
+            # Class detection
+            class_match = re.search(r"class\s+(\w+)", code)
+            if class_match:
+                return f"{class_match.group(1).lower()}.py"
+
+            # Flask/FastAPI app
+            if "flask" in code_lower or "app = flask" in code_lower:
+                return "flask_app.py"
+            if "fastapi" in code_lower or "app = fastapi" in code_lower:
+                return "fastapi_app.py"
+
+            # Function detection
+            func_match = re.search(r"def\s+(\w+)\s*\(", code)
+            if func_match:
+                return f"{func_match.group(1)}.py"
+
+            # Django models
+            if "models" in code_lower and "django" in code_lower:
+                return "models.py"
+
+            # Data processing
+            if "pandas" in code_lower or "dataframe" in code_lower:
+                return "data_processor.py"
+
+            # API client
+            if "request" in code_lower and "api" in code_lower.split():
+                return "api_client.py"
+
+            # Database
+            if "sql" in code_lower or "database" in code_lower:
+                return "database.py"
+
+            # Utils/Helper
+            if "def " in code and code.count("def ") > 2:
+                return "utils.py"
+
+        # JavaScript naming patterns
+        elif language in ["javascript", "js", "typescript", "ts"]:
+            # React component
+            if "react" in code_lower or "function\s+\w+\(\)" in code:
+                comp_match = re.search(r"function\s+(\w+)\s*\(", code)
+                if comp_match:
+                    return f"{comp_match.group(1)}.js"
+                const_match = re.search(r"const\s+(\w+)\s*=\s*\(\)", code)
+                if const_match:
+                    return f"{const_match.group(1)}.jsx"
+                return "component.jsx"
+
+            # Express server
+            if "express" in code_lower:
+                return "server.js"
+
+            # API endpoint
+            if "app.get" in code or "app.post" in code or "router" in code_lower:
+                return "api_routes.js"
+
+            # Utility functions
+            if code.count("function") > 1 or code.count("const") > 3:
+                return "utils.js"
+
+            # Config file
+            if "config" in code_lower or "export" in code and "const" in code:
+                return "config.js"
+
+        # Bash naming patterns
+        elif language in ["bash", "shell", "sh"]:
+            # Deployment script
+            if "docker" in code_lower or "deploy" in code_lower:
+                return "deploy.sh"
+
+            # Backup script
+            if "backup" in code_lower or "tar" in code_lower:
+                return "backup.sh"
+
+            # Install script
+            if "apt" in code_lower or "yum" in code_lower or "pip" in code_lower:
+                return "install.sh"
+
+            # Setup script
+            if "setup" in code_lower or "export" in code_lower:
+                return "setup.sh"
+
+        return None
+
+
+    def get_unique_filename(base_name):
+        """Generate unique filename to avoid overwriting existing files"""
+        if not os.path.exists(base_name):
+            return base_name
+
+        name, ext = os.path.splitext(base_name)
+        counter = 1
+        while os.path.exists(f"{name}_{counter}{ext}"):
+            counter += 1
+        return f"{name}_{counter}{ext}"
+  requirements_agent.txt: |
+    ollama==0.1.6
+    rich==13.7.0
+    requests==2.31.0

@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: context-admin
+  namespace: orange-code
+  labels:
+    app: context-admin
+    component: admin-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: context-admin
+  template:
+    metadata:
+      labels:
+        app: context-admin
+        component: admin-ui
+    spec:
+      containers:
+      - name: context-admin
+        image: python:3.11-slim
+        ports:
+        - containerPort: 8501
+        volumeMounts:
+        - name: admin-ui-script
+          mountPath: /app/admin_ui.py
+          subPath: admin_ui.py
+        - name: chroma-db-storage
+          mountPath: /app/chroma_db
+        workingDir: /app
+        command: ["sh", "-c"]
+        args:
+        - |
+          pip install streamlit chromadb pandas requests &&
+          streamlit run /app/admin_ui.py --server.port=8501 --server.address=0.0.0.0
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8501
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8501
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+      volumes:
+      - name: admin-ui-script
+        configMap:
+          name: admin-ui-config
+      - name: chroma-db-storage
+        persistentVolumeClaim:
+          claimName: chroma-db-pvc
+      restartPolicy: Always
