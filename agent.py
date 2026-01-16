@@ -202,7 +202,7 @@ while True:
 
     with console.status("[bold cyan]Agent is thinking...[/bold cyan]", spinner="dots"):
         try:
-            response = client.chat(model="qwen2.5-coder:0.5b", messages=messages)
+            response = client.chat(model="qwen2.5-coder:3b", messages=messages)
         except Exception as e:
             console.print(f"[bold red]Ollama Error:[/bold red] {e}")
             messages.pop()

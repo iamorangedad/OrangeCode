@@ -177,7 +177,7 @@ while True:
     ):
         try:
             response = client.chat(
-                model="qwen2.5-coder:0.5b",
+                model="qwen2.5-coder:3b",
                 messages=[
                     {"role": "system", "content": context_prompt},
                     {"role": "user", "content": user_input},
@@ -259,7 +259,7 @@ while True:
 
             with console.status("[bold cyan]Interpreting results...[/bold cyan]"):
                 final_response = client.chat(
-                    model="qwen2.5-coder:0.5b",
+                    model="qwen2.5-coder:3b",
                     messages=[
                         {"role": "system", "content": final_prompt},
                         {"role": "user", "content": f"Tool result: {result}"},

@@ -32,7 +32,7 @@ def test_ollama_connection():
         client = ollama.Client(host=ollama_host)
         models = client.list()
         print(f"✅ Connected to Ollama at {ollama_host}")
-        print(f"📋 Available models: {[m['name'] for m in models.get('models', [])]}")
+        print(f"📋 Available models: {[m['model'] for m in models.get('models', [])]}")
         return True
     except Exception as e:
         print(f"❌ Ollama connection failed: {e}")
