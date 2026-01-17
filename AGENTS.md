@@ -25,11 +25,10 @@ This is the Orange Code project - an autonomous AI coding assistant with advance
 ## Project Structure
 ```
 agent_no_rag.py          # Main no-RAG agent with scheduler
-agent.py                 # Base agent implementation
 utils.py                 # Shared utilities
 cli.py                   # CLI entry point
-test-no-rag/             # Local testing environment
-deploy/deploy-no-rag/     # Kubernetes deployment
+tests/                    # Local testing environment
+deploy/                   # Kubernetes deployment
 ```
 
 ## Agent Behavior Guidelines

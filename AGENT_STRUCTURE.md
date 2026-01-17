@@ -7,9 +7,8 @@ This project has been restructured to eliminate duplicate `agent_no_rag.py` file
 ## File Locations
 
 ### Main Agent Files (Source of Truth)
-- `agent_no_rag.py` - Main no-RAG agent implementation
+- `agent_no_rag.py` - Main no-RAG agent with scheduler
 - `utils.py` - Shared utility functions
-- `agent.py` - Base agent implementation  
 - `cli.py` - CLI entry point
 
 ### Test Environment (Uses Shared Files)
