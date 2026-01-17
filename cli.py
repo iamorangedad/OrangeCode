@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 CLI entry point for No-RAG Agent with Scheduler
-Usage: koder "your query here"
+Usage: orangecode "your query here"
 """
 
 import sys
@@ -17,10 +17,10 @@ from agent_no_rag import main as agent_main
 if __name__ == "__main__":
     # Set up CLI interface like the design described
     if len(sys.argv) < 2:
-        print("Usage: koder <query>")
-        print("       koder config")
+        print("Usage: orangecode <query>")
+        print("       orangecode config")
         sys.exit(1)
 
     # Pass arguments to agent
-    sys.argv[0] = "koder"  # Update program name
+    sys.argv[0] = "orangecode"  # Update program name
     agent_main()

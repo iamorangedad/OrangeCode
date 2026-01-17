@@ -8,7 +8,7 @@ The `agent_no_rag.py` has been completely redesigned with advanced scheduler fun
 
 ### 1. Lazy Loading with `_ensure_agent_initialized()`
 Agent initializes only when needed, not on startup:
-- Lightweight CLI entry (`koder config show`)
+- Lightweight CLI entry (`orangecode config show`)
 - Heavy initialization (LLM client, tools) happens on first message
 - Reduces startup time and resource usage
 
