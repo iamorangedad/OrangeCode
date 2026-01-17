@@ -1,71 +1,76 @@
-# Code Agent with RAG Context Management
+# Orange Code - Advanced AI Coding Agent
 
-An autonomous coding agent system with integrated RAG context management, featuring intelligent history retrieval through an independent microservice architecture.
+A production-ready autonomous coding assistant with sophisticated scheduler functionality, lazy loading, streaming display, and project-aware context management.
 
-## 🏗️ Architecture Design
+## 🚀 Key Features
+
+### 🎯 Advanced Scheduler Architecture
+- **Lazy Loading**: Fast CLI startup with `_ensure_agent_initialized()`
+- **Concurrency Control**: `asyncio.Semaphore(10)` prevents API overload
+- **Streaming Display**: Real-time output with tool call synchronization
+- **ESC Cancellation**: Immediate interrupt via non-blocking keyboard detection
+- **Project Context**: Automatic loading of `AGENTS.md` for project awareness
+
+### 🛠️ Available Tools
+- `read_file(path)` - Read content from files
+- `write_file(path, content)` - Write content to files
+- `list_files()` - List files in current directory
+- `run_command(command)` - Execute shell commands with confirmation
+
+### 🎮 User Experience
+- **Rich Terminal UI**: Beautiful formatting with live updates
+- **Tool Synchronization**: Proper display of concurrent tool executions
+- **Project-Aware Responses**: Context-aware assistance based on project stack
+- **Safety First**: Confirmation required for dangerous operations
+
+## 🏗️ Architecture
 
 ```
-┌─────────────────┐      REST API      ┌──────────────────────┐
-│  Agent Client   │ ◄──────────────────► │ Context Service      │
-│  (agent_with_   │                      │ (FastAPI + ChromaDB) │
-│   rag.py)       │                      │                      │
-└─────────────────┘                      └──────────────────────┘
-         │                                         │
-         │                                         ▼
-         ▼                               ┌──────────────────┐
-┌─────────────────┐                     │  Vector Database │
-│  Ollama LLM     │                     │   (ChromaDB)     │
-│  (qwen2.5)      │                     └──────────────────┘
-└─────────────────┘
+🎛️ CLI Interface (cli.py)
+        ↓
+🤖 AgentScheduler (agent_no_rag.py)
+    ├── 🧠 Lazy Loading (_ensure_agent_initialized)
+    ├── 📋 Project Context (AGENTS.md)
+    ├── 🔄 Concurrency Control (Semaphore)
+    ├── 📺 Streaming Display Manager
+    └── ⚠️ ESC Key Monitoring (Cancellation)
+        ↓
+🛠️ Core Tools (utils.py)
+        ↓
+🤖 Ollama LLM (qwen2.5-coder:3b)
 ```
 
-### Core Features
+## 🚀 Quick Start
 
-1. **Semantic Retrieval**: Vector similarity search based on sentence-transformers
-2. **Hierarchical Context**: Combines semantic relevance + temporal continuity
-3. **Microservice Architecture**: Independently deployable, easily scalable
-4. **Type Classification**: Automatic message type identification (user_query, tool_call, agent_response)
-5. **Session Isolation**: Multi-session management via session_id
-
-## 📦 Quick Start
-
-### Method 1: Docker Compose (Recommended)
+### Method 1: CLI Interface (Recommended)
 
 ```bash
-# 1. Prepare file structure
-project/
-├── context_service.py
-├── agent_with_rag.py
-├── admin_ui.py
-├── docker-compose.yml
-├── Dockerfile.context
-├── requirements_context.txt
-└── requirements_agent.txt
+# Single query
+./cli.py "帮我写个 fibonacci 函数"
 
-# 2. Start services
-docker-compose up -d
+# Show configuration
+./cli.py config
 
-# 3. Check service status
-docker-compose ps
-
-# 4. Run Agent (ensure Ollama is running first)
-python agent_with_rag.py
+# Interactive mode
+./cli.py
 ```
 
-Access Admin UI: http://localhost:8501
-
-### Method 2: Local Development
+### Method 2: Direct Agent Usage
 
 ```bash
-# 1. Install dependencies
-pip install -r requirements_context.txt
-pip install -r requirements_agent.txt
+# With arguments
+python agent_no_rag.py --config
+python agent_no_rag.py --ollama-host http://custom:11434 "query"
 
-# 2. Start context service
-python context_service.py
+# Interactive
+python agent_no_rag.py
+```
 
-# 3. Run Agent in new terminal
-python agent_with_rag.py
+### Method 3: Local Testing with uv
+
+```bash
+cd tests/
+uv run python ../agent_no_rag.py
 ```
 
 ## 🔧 Configuration
@@ -73,223 +78,265 @@ python agent_with_rag.py
 ### Environment Variables
 
 ```bash
-# Agent configuration
-export CONTEXT_SERVICE_URL="http://localhost:8000"
-export OLLAMA_HOST="http://localhost:11434"
+# Ollama server
+export OLLAMA_HOST="http://10.0.0.55:11434"
 
-# Context Service configuration
-export CHROMA_DB_PATH="./chroma_db"
+# Buffered output
+export PYTHONUNBUFFERED=1
 ```
 
-### Tuning Parameters
+### Project Context (AGENTS.md)
 
-In `agent_with_rag.py`:
-```python
-MAX_CONTEXT_ITEMS = 5  # Number of relevant context items to retrieve
-RECENT_CONTEXT_LIMIT = 3  # Number of recent conversations to maintain
+Create `AGENTS.md` in your project root to provide context:
+
+```markdown
+# AI Agent Configuration
+
+## Technology Stack
+- **Python 3.11** - Primary programming language
+- **Ollama** - LLM inference with qwen2.5-coder:3b model
+- **Rich** - Terminal UI and formatting
+
+## Code Standards
+- Use Python type hints where possible
+- Follow PEP 8 style guidelines
+- Document functions with docstrings
+
+## Common Commands
+- **Testing**: `uv run python test_environment.py`
+- **Dependencies**: `uv add package-name`
 ```
 
-## 📚 API Documentation
+## 🐳 Deployment
 
-### Context Service API
+### Kubernetes
 
-#### 1. Add Context
 ```bash
-POST /context/add
-{
-  "session_id": "uuid-string",
-  "message": {
-    "role": "user",
-    "content": "message content",
-    "timestamp": "2024-01-01T12:00:00",
-    "metadata": {"type": "user_query"}
-  }
-}
+# Deploy agent
+kubectl apply -k deploy/
+
+# Check deployment
+kubectl get all -n orange-code
+
+# Access logs
+kubectl logs -f deployment/agent-no-rag -n orange-code
 ```
 
-#### 2. Semantic Search
+### Docker
+
 ```bash
-POST /context/query
-{
-  "session_id": "uuid-string",
-  "query": "search query",
-  "top_k": 5,
-  "filter_by_type": "tool_call"  # optional
-}
+# Build image
+cd deploy/
+docker build -t orange-code-agent .
+
+# Run container
+docker run -it --rm \
+  -e OLLAMA_HOST=http://10.0.0.55:11434 \
+  orange-code-agent
 ```
 
-#### 3. Get Recent Conversations
+## 🧪 Testing
+
+### Environment Testing
+
 ```bash
-POST /context/recent?session_id=xxx&limit=10&offset=0
+cd tests/
+uv run python test_environment.py
 ```
 
-#### 4. Session Statistics
+### Manual Testing
+
 ```bash
-GET /context/stats/{session_id}
+# Test dependencies
+uv run python -c "import ollama, rich, requests; print('✅ All deps OK')"
+
+# Test Ollama connection
+uv run python -c "import ollama; print(ollama.Client(host='http://10.0.0.55:11434').list())"
 ```
 
-#### 5. Clear Context
-```bash
-POST /context/clear
-{
-  "session_id": "uuid-string"
-}
-```
+## 📁 Project Structure
 
-Full API documentation: http://localhost:8000/docs
+```
+Orange Code/
+├── 🤖 agent_no_rag.py          # Main agent with scheduler
+├── 🎯 cli.py                    # CLI entry point
+├── 🛠️ utils.py                  # Shared utilities
+├── 🧪 tests/                    # Testing environment
+│   ├── run.sh                   # Test runner
+│   ├── test_environment.py       # Environment validation
+│   ├── pyproject.toml           # uv project config
+│   └── .env                     # Test environment
+├── 🚀 deploy/                   # Deployment assets
+│   ├── Dockerfile               # Container build
+│   ├── agent-config.yaml        # Kubernetes ConfigMap
+│   ├── agent-no-rag-deployment.yaml  # Deployment
+│   └── kustomization.yaml       # Kustomize config
+├── 📋 AGENTS.md                # Project context
+├── 📦 requirements_no_rag.txt    # Dependencies
+├── 📚 AGENT_STRUCTURE.md       # Architecture docs
+└── 📖 SCHEDULER_DESIGN.md      # Scheduler implementation
+```
 
 ## 🎯 Usage Examples
 
-### Basic Conversation
-```
-You: Create a Python file with Hello World
+### Basic Function Creation
 
-🤖 Agent: [Calls write_file tool]
-✅ Result: File 'hello.py' written successfully.
-```
-
-### Context-Aware Conversation
-```
-You: Where is the file I just created?
-
-🤖 Agent: [Retrieves previous write_file operation from context]
-Based on the previous operation, the file is located at ./hello.py
-```
-
-### Multi-Turn Collaboration
-```
-You: Read the contents of hello.py
-🤖 Agent: [Executes read_file]
-
-You: Change it to print Hello World in Chinese
-🤖 Agent: [Uses context to understand "it" refers to hello.py, executes write_file]
-```
-
-### Special Commands
-```
-stats   - View current session statistics
-clear   - Clear current session context
-quit    - Exit program
-```
-
-## 🔍 How It Works
-
-### 1. Context Storage Flow
-```
-User Input → Store in ChromaDB (generate embedding)
-         ↓
-    Assign type label (user_query/tool_call/agent_response)
-         ↓
-    Associate with session_id and timestamp
-```
-
-### 2. Context Retrieval Flow
-```
-New User Query → Generate query embedding
-              ↓
-    Search top_k similar vectors in ChromaDB
-              ↓
-    Fetch recent N conversations (temporal continuity)
-              ↓
-    Combine to build context-aware prompt
-```
-
-### 3. Prompt Building Strategy
-```
-[System Prompt]
-  ├─ Tool definitions
-  ├─ Relevant historical context (semantically similar, top 3)
-  ├─ Recent conversations (temporally continuous, last 3)
-  └─ Current user request
-```
-
-## 📊 Performance Metrics
-
-- **Retrieval Latency**: < 100ms (top-5 query)
-- **Storage Size**: ~1KB per message (including embedding)
-- **Concurrency**: FastAPI async processing
-- **Scalability**: Supports multi-session concurrency
-
-## 🛠️ Advanced Configuration
-
-### 1. Change Embedding Model
-```python
-# Modify in context_service.py
-embedding_model = SentenceTransformer('paraphrase-multilingual-mpnet-base-v2')
-```
-
-Recommended models:
-- `all-MiniLM-L6-v2` (fast, 384 dimensions)
-- `all-mpnet-base-v2` (accurate, 768 dimensions)
-- `paraphrase-multilingual-mpnet-base-v2` (multilingual)
-
-### 2. Adjust Vector Database
-```python
-# Use persistent storage
-chroma_client = chromadb.PersistentClient(path="./chroma_db")
-
-# Use in-memory mode (for testing)
-chroma_client = chromadb.Client()
-```
-
-### 3. Custom Filter Strategy
-```python
-# Add custom filters in query_context
-where_filter = {
-    "session_id": session_id,
-    "type": "tool_call",
-    "$and": [
-        {"metadata.tool_name": "write_file"},
-        {"timestamp": {"$gte": "2024-01-01"}}
-    ]
-}
-```
-
-## 🐛 Troubleshooting
-
-### Issue 1: Context service connection failed
 ```bash
-# Check service status
-curl http://localhost:8000/
-
-# View logs
-docker-compose logs context-service
+./cli.py "Write a Python function to calculate fibonacci numbers"
 ```
 
-### Issue 2: ChromaDB permission error
+### File Operations
+
 ```bash
-# Ensure directory permissions
-chmod -R 755 ./chroma_db
+./cli.py "Read the main.py file and add logging"
+./cli.py "Create a new file called config.py with configuration"
 ```
 
-### Issue 3: Slow embedding model download
+### Project Management
+
 ```bash
-# Pre-download model
-python -c "from sentence_transformers import SentenceTransformer; \
-           SentenceTransformer('all-MiniLM-L6-v2')"
+./cli.py "Set up a proper Python project structure"
+./cli.py "Add requirements.txt with necessary dependencies"
 ```
 
-## 🚀 Extension Suggestions
+## 🎮 Interactive Commands
 
-### 1. Additional Context Strategies
-- **Time Window Filter**: Retrieve only context from last N hours
-- **Importance Scoring**: Weight messages by importance
-- **Topic Clustering**: Group and manage conversations by topic
+When running in interactive mode:
 
-### 2. Performance Optimization
-- **Caching**: Redis cache for high-frequency queries
-- **Batch Processing**: Batch insertions to reduce I/O
-- **Async Storage**: Non-blocking context saving
+```bash
+You: stats
+📊 Shows session statistics (messages, tools used, duration)
 
-### 3. Feature Enhancements
-- **Multimodal Context**: Support code AST, images, documents
-- **Cross-Session Retrieval**: Search across all user sessions
-- **Auto-Summarization**: Automatically generate summaries for long conversations
+You: clear  
+🧹 Clears conversation history
+
+You: quit / exit
+👋 Exits the agent
+
+You: [ESC]
+🛑 Cancels current operation immediately
+```
+
+## 📊 Performance
+
+### Resource Usage
+- **Memory**: ~512MB steady state
+- **CPU**: Low during idle, moderate during tool execution
+- **Startup**: <2 seconds (lazy loading)
+- **Response Time**: 2-5 seconds (depends on LLM model)
+
+### Concurrency
+- **Max Concurrent**: 10 requests (configurable)
+- **API Protection**: Semaphore prevents overload
+- **Graceful Degradation**: Queue management during high load
+
+## 🛡️ Safety Features
+
+### Command Execution Safety
+- **Confirmation Required**: All shell commands need user approval
+- **Clear Display**: Shows exact command to be executed
+- **Abort Option**: Users can cancel dangerous operations
+
+### Data Protection
+- **No Persistent Storage**: Conversation history in memory only
+- **Session Isolation**: No cross-session data leakage
+- **Local Operations**: No external API calls except Ollama
+
+## 🚨 Troubleshooting
+
+### Ollama Connection Issues
+
+```bash
+# Test connection
+curl http://10.0.0.55:11434/api/tags
+
+# Check model availability
+curl http://10.0.0.55:11434/api/tags | jq
+
+# Verify model
+uv run python -c "import ollama; print(ollama.Client().list())"
+```
+
+### Dependencies Issues
+
+```bash
+# Reinstall dependencies
+cd tests/
+uv sync --reinstall
+
+# Check installed packages
+uv pip list
+```
+
+### Permission Issues
+
+```bash
+# Make CLI executable
+chmod +x cli.py
+
+# Make test script executable  
+chmod +x tests/run.sh
+```
+
+### ESC Key Not Working
+
+```bash
+# Ensure running in proper terminal
+# ESC cancellation works in Unix terminals only
+# Check if stdin is properly connected
+```
+
+## 🔧 Advanced Configuration
+
+### Customizing Model
+
+```bash
+# Set different model
+export OLLAMA_MODEL="llama2"
+./cli.py "Your query here"
+
+# Or pass via CLI
+python agent_no_rag.py --ollama-host http://custom:11434 "query"
+```
+
+### Concurrency Tuning
+
+Edit `agent_no_rag.py` to change semaphore limit:
+
+```python
+# In AgentScheduler.__init__
+self.semaphore = asyncio.Semaphore(5)  # Reduce from 10 to 5
+```
+
+### Conversation History Limit
+
+Change history retention in `build_history_aware_prompt()`:
+
+```python
+for msg in conversation_history[-5:]:  # Change from 10 to 5
+```
+
+## 🚀 Extension Ideas
+
+### Potential Enhancements
+- **Multiple Model Support**: Choose between different LLM models
+- **Plugin System**: Dynamic tool loading
+- **Web Interface**: Browser-based agent interaction
+- **Persistent History**: Option to save/load conversations
+- **Code Analysis**: AST-based code understanding
+- **Git Integration**: Repository-aware assistance
+
+### Contributing
+Feel free to implement these features and submit pull requests!
 
 ## 📝 License
 
-MIT License
+MIT License - Feel free to use and modify for your projects.
 
 ## 🤝 Contributing
 
-Issues and Pull Requests are welcome!
+Issues and Pull Requests are welcome! Please see the development guidelines in `AGENTS.md`.
+
+---
+
+**Orange Code** - Where AI meets real-world coding productivity. 🚀
