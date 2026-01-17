@@ -118,7 +118,7 @@ class AgentScheduler:
         # Lazy loading flag
         self._agent_initialized = False
 
-        # 工具权限管理
+        # 工具Permission management
         self.active_skills = active_skills or ["developer_assistant"]
         self.permission_guard = register_skill_permissions(self.active_skills)
         self.available_tools = self.permission_guard.get_restricted_tools()

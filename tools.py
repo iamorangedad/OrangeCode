@@ -1,6 +1,6 @@
 """
-工具注册和管理系统
-基于装饰器的工具注册，支持动态权限管理
+Tool registration和管理系统
+基于Decorator的Tool registration，支持动态Permission management
 """
 
 import inspect
@@ -13,15 +13,15 @@ class PermissionLevel(Enum):
     """权限级别枚举"""
 
     READ_ONLY = "read_only"  # 只读权限
-    FILE_OPERATIONS = "file_ops"  # 文件操作权限
-    SHELL_COMMANDS = "shell_cmds"  # Shell命令权限
+    FILE_OPERATIONS = "file_ops"  # File operations权限
+    SHELL_COMMANDS = "shell_cmds"  # Shell commands权限
     NETWORK_ACCESS = "network"  # 网络访问权限
-    SYSTEM_ADMIN = "system_admin"  # 系统管理员权限
+    SYSTEM_ADMIN = "system_admin"  # System administration员权限
     ALL_PERMISSIONS = "all"  # 所有权限
 
 
 class SkillRestriction(Enum):
-    """技能限制枚举"""
+    """Skill restriction枚举"""
 
     FILE_MANAGER = "file_manager"  # 文件管理技能
     CODE_ANALYZER = "code_analyzer"  # 代码分析技能
@@ -30,7 +30,7 @@ class SkillRestriction(Enum):
     ALL_SKILLS = "all"  # 所有技能
 
 
-# 全局工具注册表
+# 全局Tool registration表
 _tool_registry: Dict[str, Dict[str, Any]] = {}
 
 # 激活的技能权限
@@ -44,7 +44,7 @@ def function_tool(
     skill_types: List[SkillRestriction] = None,
 ):
     """
-    工具注册装饰器
+    Tool registrationDecorator
 
     Args:
         name: 工具名称
@@ -92,7 +92,7 @@ def function_tool(
 
 
 class SkillRestrictionGuard:
-    """技能权限守卫"""
+    """技能Permission guard"""
 
     def __init__(self, active_skills: List[str]):
         self.active_skills = active_skills
@@ -208,9 +208,9 @@ class FileWriteModel(BaseModel):
 
 
 class ShellCommandModel(BaseModel):
-    """Shell命令执行模型"""
+    """Shell commands执行模型"""
 
-    command: str = Field(..., description="要执行的Shell命令")
+    command: str = Field(..., description="要执行的Shell commands")
     confirm: bool = Field(default=True, description="是否需要用户确认")
     timeout: int = Field(default=30, description="超时时间(秒)")
 
@@ -265,12 +265,12 @@ def enhanced_write_file(model: FileWriteModel) -> str:
 
 @function_tool(
     name="execute_shell",
-    description="执行Shell命令",
+    description="执行Shell commands",
     permissions=[PermissionLevel.SHELL_COMMANDS],
     skill_types=[SkillRestriction.DEVELOPER_ASSISTANT, SkillRestriction.SYSTEM_ADMIN],
 )
 def enhanced_shell_command(model: ShellCommandModel) -> str:
-    """增强的Shell命令执行功能"""
+    """增强的Shell commands执行功能"""
     try:
         import subprocess
 
@@ -327,7 +327,7 @@ def enhanced_list_files(model: ListFilesModel) -> str:
 # 示例权限受限的技能
 @function_tool(
     name="safe_file_operations",
-    description="安全的文件操作（只读）",
+    description="安全的File operations（只读）",
     permissions=[PermissionLevel.READ_ONLY],
     skill_types=[SkillRestriction.CODE_ANALYZER],
 )
