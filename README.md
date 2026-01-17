@@ -42,28 +42,27 @@ A production-ready autonomous coding assistant with sophisticated scheduler func
 
 ## 🚀 Quick Start
 
-### Method 1: CLI Interface (Recommended)
+### Method 1: Install as System Command (Recommended)
 
 ```bash
-# Single query
+# Install Orange Code system-wide
+pip install -e .
+
+# Now you can use it anywhere like 'opencode'
+orangecode
+```
+
+### Method 2: Direct CLI Usage
+
+```bash
+# Single query with legacy CLI
 ./cli.py "帮我写个 fibonacci 函数"
 
-# Show configuration
+# Show configuration  
 ./cli.py config
 
 # Interactive mode
 ./cli.py
-```
-
-### Method 2: Direct Agent Usage
-
-```bash
-# With arguments
-python agent_no_rag.py --config
-python agent_no_rag.py --ollama-host http://custom:11434 "query"
-
-# Interactive
-python agent_no_rag.py
 ```
 
 ### Method 3: Local Testing with uv
@@ -201,20 +200,26 @@ Orange Code/
 
 ## 🎮 Interactive Commands
 
-When running in interactive mode:
+When running `orangecode` in your terminal:
 
 ```bash
-You: stats
+orangecode> stats
 📊 Shows session statistics (messages, tools used, duration)
 
-You: clear  
+orangecode> clear  
 🧹 Clears conversation history
 
-You: quit / exit
+orangecode> config
+⚙️ Shows configuration (Ollama host, model, project context)
+
+orangecode> quit / exit
 👋 Exits the agent
 
-You: [ESC]
+orangecode> [ESC]
 🛑 Cancels current operation immediately
+
+orangecode> Write a Python function for fibonacci
+🤖 AI creates the function with streaming output
 ```
 
 ## 📊 Performance
@@ -293,9 +298,9 @@ chmod +x tests/run.sh
 ```bash
 # Set different model
 export OLLAMA_MODEL="llama2"
-./cli.py "Your query here"
+orangecode "Your query here"
 
-# Or pass via CLI
+# Or use legacy CLI
 python agent_no_rag.py --ollama-host http://custom:11434 "query"
 ```
 
