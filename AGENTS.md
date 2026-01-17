@@ -1,14 +1,12 @@
 # AI Agent Configuration
 
 ## Project Overview
-This is the Orange Code project - an autonomous AI coding assistant with RAG and no-RAG variants.
+This is the Orange Code project - an autonomous AI coding assistant with advanced scheduler functionality.
 
 ## Technology Stack
 - **Python 3.11** - Primary programming language
 - **Ollama** - LLM inference with qwen2.5-coder:3b model
 - **Rich** - Terminal UI and formatting
-- **ChromaDB** - Vector database (RAG variant only)
-- **FastAPI** - API framework (RAG variant only)
 - **Kubernetes** - Deployment platform
 
 ## Code Standards
@@ -27,12 +25,11 @@ This is the Orange Code project - an autonomous AI coding assistant with RAG and
 ## Project Structure
 ```
 agent_no_rag.py          # Main no-RAG agent with scheduler
-agent_with_rag.py        # RAG-enhanced agent
 agent.py                 # Base agent implementation
 utils.py                 # Shared utilities
+cli.py                   # CLI entry point
 test-no-rag/             # Local testing environment
 deploy/deploy-no-rag/     # Kubernetes deployment
-rag/                     # RAG service components
 ```
 
 ## Agent Behavior Guidelines

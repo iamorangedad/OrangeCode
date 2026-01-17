@@ -10,7 +10,7 @@ This project has been restructured to eliminate duplicate `agent_no_rag.py` file
 - `agent_no_rag.py` - Main no-RAG agent implementation
 - `utils.py` - Shared utility functions
 - `agent.py` - Base agent implementation  
-- `agent_with_rag.py` - RAG-enhanced agent
+- `cli.py` - CLI entry point
 
 ### Test Environment (Uses Shared Files)
 - `test-no-rag/` - Local testing environment with uv
@@ -59,8 +59,8 @@ All environments automatically use the updated code.
 project-root/
 ├── agent_no_rag.py           # ← SOURCE OF TRUTH
 ├── utils.py                  # ← Shared utilities
+├── cli.py                    # ← CLI entry point
 ├── test-no-rag/
-│   ├── agent_no_rag.py       # ❌ REMOVED (now uses ../agent_no_rag.py)
 │   └── run.sh               # ✅ Updated to use shared file
 └── deploy/deploy-no-rag/
     ├── agent-config.yaml     # ✅ Updated (no embedded code)
@@ -68,3 +68,13 @@ project-root/
 ```
 
 This structure eliminates code duplication while maintaining all functionality.
+
+## RAG Removal
+All RAG-related components have been removed:
+- Removed `agent_with_rag.py` 
+- Removed `deploy/deploy-with-rag/` directory
+- Removed `rag/` service directory
+- Removed `tests/rag/` test directory
+- Removed `admin_ui.py` RAG interface
+
+The project now focuses solely on the no-RAG implementation with advanced scheduler functionality.
