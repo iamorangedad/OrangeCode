@@ -17,6 +17,7 @@ import asyncio
 import select
 import signal
 import argparse
+import inspect
 from pathlib import Path
 from typing import Optional, Dict, List, Any, AsyncGenerator
 from datetime import datetime
@@ -30,6 +31,7 @@ from rich.live import Live
 from rich.text import Text
 from rich import box
 from utils import read_file, write_file, list_files, execute_command
+from tools import get_all_tools, register_skill_permissions, SkillRestriction
 
 
 class StreamingDisplayManager:
@@ -103,7 +105,7 @@ class StreamingDisplayManager:
 class AgentScheduler:
     """Main scheduler with lazy loading and concurrency control"""
 
-    def __init__(self):
+    def __init__(self, active_skills: List[str] = None):
         self.console = Console()
         self.client: Optional[ollama.Client] = None
         self.conversation_history: List[Dict[str, Any]] = []
@@ -115,6 +117,11 @@ class AgentScheduler:
 
         # Lazy loading flag
         self._agent_initialized = False
+
+        # 工具权限管理
+        self.active_skills = active_skills or ["developer_assistant"]
+        self.permission_guard = register_skill_permissions(self.active_skills)
+        self.available_tools = self.permission_guard.get_restricted_tools()
 
     def _ensure_agent_initialized(self):
         """Initialize agent on first use (lazy loading)"""
@@ -172,8 +179,22 @@ class AgentScheduler:
 
     def _build_prompt(self, user_query: str) -> str:
         """Build prompt with project context and conversation history"""
+        # 构建工具描述
+        tool_descriptions = []
+        for tool_name in self.available_tools:
+            tool_info = get_all_tools()[tool_name]
+            tool_descriptions.append(f"- {tool_name}: {tool_info['description']}")
+
+        # 添加权限说明
+        permission_info = f"""
+--- PERMISSIONS ---
+Active Skills: {", ".join(self.active_skills)}
+Available Tools: {", ".join(self.available_tools)}
+Note: Tools are filtered by active skill permissions.
+"""
+
         prompt_parts = [
-            "You are an autonomous coding agent with access to file system tools.",
+            "You are an autonomous coding agent with advanced tool management.",
         ]
 
         # Add project context if available
@@ -184,10 +205,10 @@ class AgentScheduler:
         prompt_parts.extend(
             [
                 "\n--- TOOLS AVAILABLE ---",
-                "- read_file(path): Read content from a file",
-                "- write_file(path, content): Write content to a file",
-                "- list_files(): List files in current directory",
-                "- run_command(command): Execute shell commands (requires confirmation)",
+            ]
+            + tool_descriptions
+            + [
+                permission_info,
                 "\n--- RESPONSE FORMAT ---",
                 "Format your response as JSON:",
                 '{"thought": "your reasoning", "action": "describe what to do", "tool": "tool_name", "args": {...}}',
@@ -209,39 +230,59 @@ class AgentScheduler:
         return "\n".join(prompt_parts)
 
     async def _execute_tool(self, tool: str, args: Dict[str, Any], call_id: str) -> str:
-        """Execute a tool with async support"""
+        """Execute a tool with async support using the tool registry"""
+        # 检查工具权限
+        if not self.permission_guard.can_use_tool(tool):
+            error_msg = (
+                f"❌ 权限不足：当前技能 '{self.active_skills}' 不允许使用工具 '{tool}'"
+            )
+            self.display_manager.add_tool_call(call_id, {"tool": tool, "args": args})
+            self.display_manager.complete_tool_call(call_id, error_msg)
+            return error_msg
+
+        # 获取工具函数
+        tool_registry = get_all_tools()
+        if tool not in tool_registry:
+            error_msg = f"❌ 未知工具：'{tool}'"
+            self.display_manager.add_tool_call(call_id, {"tool": tool, "args": args})
+            self.display_manager.complete_tool_call(call_id, error_msg)
+            return error_msg
+
+        tool_info = tool_registry[tool]
+        tool_function = tool_info["function"]
+
         self.display_manager.add_tool_call(call_id, {"tool": tool, "args": args})
 
         try:
-            if tool == "read_file":
-                path = args.get("path", "")
-                result = read_file(path)
-            elif tool == "write_file":
-                path = args.get("path", "")
-                content = args.get("content", "")
-                result = write_file(path, content)
-            elif tool == "list_files":
-                result = list_files()
-            elif tool == "run_command":
-                command = args.get("command", "")
-                # For run_command, we need confirmation
-                self.console.print(
-                    Panel(
-                        f"[yellow]Command:[/yellow] [cyan]{command}[/cyan]",
-                        title="⚠️ Safety Check",
-                        border_style="yellow",
-                        box=box.ROUNDED,
-                    )
-                )
-                if not Prompt.ask("Allow execution?", default=False):
-                    result = "Error: User denied command execution."
-                else:
-                    result = execute_command(command)
-            else:
-                result = f"Error: Unknown tool '{tool}'"
+            # 验证参数类型
+            sig = inspect.signature(tool_function)
+            bound_args = {}
+
+            for param_name, param in sig.parameters.items():
+                if param_name in args:
+                    # 使用Pydantic模型验证参数
+                    param_type = param.annotation
+                    try:
+                        if (
+                            hasattr(param_type, "__origin__")
+                            and param_type.__origin__ is dict
+                        ):
+                            # 如果参数是Pydantic模型
+                            bound_args[param_name] = param_type(**args[param_name])
+                        else:
+                            bound_args[param_name] = args[param_name]
+                    except Exception as validation_error:
+                        error_msg = (
+                            f"❌ 参数验证失败 '{param_name}': {str(validation_error)}"
+                        )
+                        self.display_manager.complete_tool_call(call_id, error_msg)
+                        return error_msg
+
+            # 执行工具函数
+            result = tool_function(**bound_args)
 
         except Exception as e:
-            result = f"Error executing {tool}: {str(e)}"
+            result = f"❌ 执行工具 '{tool}' 失败: {str(e)}"
 
         self.display_manager.complete_tool_call(call_id, result)
         return result
@@ -406,11 +447,172 @@ def main():
             scheduler.cleanup()
 
 
-if __name__ == "__main__":
-    main()
-    scheduler.cleanup()
-
-
 def main():
     """Main entry point for orangecode command"""
-    cli_main()
+    import argparse
+    
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description="Orange Code - AI Coding Assistant with Tool Management")
+    parser.add_argument("--skills", nargs="+", help="Active skills (e.g., --skills file_manager developer_assistant)")
+    parser.add_argument("--list-tools", action="store_true", help="List all available tools")
+    parser.add_argument("--list-skills", action="store_true", help="List all available skills")
+    
+    # 解析已知参数
+    known_args, remaining_args = parser.parse_known_args()
+    
+    try:
+        # Display welcome banner
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.prompt import Prompt
+        from rich import box
+        from rich.table import Table
+        import asyncio
+        
+        console = Console()
+        
+        # 处理特殊命令
+        if known_args.list_tools:
+            _list_all_tools(console)
+            return
+            
+        if known_args.list_skills:
+            _list_all_skills(console)
+            return
+        
+        # 设置活跃技能
+        active_skills = known_args.skills or ["developer_assistant"]
+        
+        console.print(
+            Panel(
+                f"[bold cyan]🍊 Orange Code - AI Coding Assistant[/bold cyan]\n\n"
+                f"[yellow]Active Skills:[/yellow] [green]{', '.join(active_skills)}[/green]\n"
+                "[yellow]Commands:[/yellow]\n"
+                "• Type your coding questions directly\n"
+                "• [green]config[/green] - Show configuration\n" 
+                "• [green]tools[/green] - List available tools\n"
+                "• [green]quit[/green]/[green]exit[/green] - Exit\n"
+                "• [green]ESC[/green] - Cancel current operation\n\n"
+                "[yellow]Example:[/yellow]\n"
+                "  orangecode> Write a Python function for fibonacci\n"
+                "  orangecode> Read main.py and add logging\n"
+                "  orangecode --skills file_manager --list-tools",
+                title="🤖 Welcome",
+                border_style="cyan",
+                box=box.ROUNDED,
+            )
+        )
+        
+        # Interactive loop
+        scheduler = AgentScheduler(active_skills=active_skills)
+        
+        while True:
+            try:
+                user_input = Prompt.ask("\n[bold green]orangecode[/bold green]")
+                
+                if user_input.lower() in ["quit", "exit"]:
+                    console.print("[bold green]👋 Goodbye![/bold green]")
+                    break
+                    
+                if user_input.lower() == "config":
+                    # Show configuration
+                    scheduler._ensure_agent_initialized()
+                    ollama_host = os.getenv("OLLAMA_HOST", "http://10.0.0.55:11434")
+                    available_tools = ', '.join(scheduler.available_tools)
+                    console.print(
+                        Panel(
+                            f"[bold cyan]🍊 Orange Code Configuration[/bold cyan]\n\n"
+                            f"Ollama Host: [green]{ollama_host}[/green]\n"
+                            f"Model: [green]qwen2.5-coder:3b[/green]\n"
+                            f"Active Skills: [green]{', '.join(scheduler.active_skills)}[/green]\n"
+                            f"Available Tools: [green]{available_tools}[/green]\n"
+                            f"Project Context: [green]{scheduler.project_context[:100]}...[/green]" if len(scheduler.project_context) > 100 else f"Project Context: [green]{scheduler.project_context}[/green]",
+                            title="⚙️ Config",
+                            border_style="cyan",
+                            box=box.ROUNDED,
+                        )
+                    )
+                    continue
+                    
+                if user_input.lower() == "tools":
+                    # Show available tools
+                    _show_available_tools(console, scheduler)
+                    continue
+                    
+                if user_input.strip():
+                    # Process the user's query
+                    asyncio.run(scheduler.process_message(user_input))
+                    
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Use [bold]orangecode quit[/bold] to exit[/yellow]")
+                continue
+            except EOFError:
+                console.print("[bold green]👋 Goodbye![/bold green]")
+                break
+                
+    finally:
+        if 'scheduler' in locals():
+            scheduler.cleanup()
+    except Exception as e:
+        print(f"Error starting Orange Code: {e}")
+        sys.exit(1)
+
+
+def _list_all_tools(console: Console):
+    """列出所有注册的工具"""
+    from rich.table import Table
+    tools = get_all_tools()
+    
+    table = Table(title="🛠️ All Registered Tools")
+    table.add_column("Tool Name", style="cyan")
+    table.add_column("Description", style="green")
+    table.add_column("Permissions", style="yellow")
+    table.add_column("Skills", style="magenta")
+    
+    for tool_name, tool_info in tools.items():
+        permissions = ', '.join([p.value for p in tool_info['permissions']])
+        skills = ', '.join([s.value for s in tool_info['skill_types']])
+        table.add_row(tool_name, tool_info['description'], permissions, skills)
+    
+    console.print(table)
+
+
+def _list_all_skills(console: Console):
+    """列出所有可用的技能"""
+    from rich.table import Table
+    
+    table = Table(title="🎯 Available Skills")
+    table.add_column("Skill Name", style="cyan")
+    table.add_column("Description", style="green")
+    table.add_column("Default Permissions", style="yellow")
+    
+    skills = {
+        "file_manager": "File management operations (read, write, list)",
+        "code_analyzer": "Code analysis and inspection (read-only)",
+        "system_info": "System information gathering",
+        "developer_assistant": "Full development assistant with all capabilities"
+    }
+    
+    for skill, desc in skills.items():
+        table.add_row(skill, desc, "Varies by skill type")
+    
+    console.print(table)
+
+
+def _show_available_tools(console: Console, scheduler):
+    """显示当前可用的工具"""
+    from rich.table import Table
+    
+    table = Table(title=f"🛠️ Available Tools (Skills: {', '.join(scheduler.active_skills)})")
+    table.add_column("Tool Name", style="cyan")
+    table.add_column("Description", style="green")
+    
+    for tool_name in scheduler.available_tools:
+        tool_info = get_all_tools()[tool_name]
+        table.add_row(tool_name, tool_info['description'])
+    
+    console.print(table)
+
+
+if __name__ == "__main__":
+    main()
