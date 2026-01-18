@@ -207,13 +207,13 @@ class OrangeCodeScheduler:
 
     def _build_prompt(self, user_query: str) -> str:
         """Build prompt with project context and conversation history"""
-        # 构建工具描述
+        # Build tool descriptions
         tool_descriptions = []
         for tool_name in self.available_tools:
             tool_info = get_all_tools()[tool_name]
             tool_descriptions.append(f"- {tool_name}: {tool_info['description']}")
 
-        # 添加权限说明
+        # Add permission information
         permission_info = f"""
 --- PERMISSIONS ---
 Active Skills: {", ".join(self.active_skills)}
@@ -261,9 +261,7 @@ Note: Tools are filtered by active skill permissions.
         """Execute a tool with async support using LLM retry mechanism"""
         # Check tool permissions
         if not self.permission_guard.can_use_tool(tool):
-            error_msg = (
-                f"❌ 权限不足：当前技能 '{self.active_skills}' 不允许使用工具 '{tool}'"
-            )
+            error_msg = f"❌ Insufficient permissions: current skill '{self.active_skills}' does not allow using tool '{tool}'"
             self.display_manager.add_tool_call(call_id, {"tool": tool, "args": args})
             self.display_manager.complete_tool_call(call_id, error_msg)
             return error_msg
@@ -382,7 +380,7 @@ def main():
     """Main entry point for orangecode command"""
     import argparse
 
-    # 解析命令行参数
+    # Parse command line arguments
     parser = argparse.ArgumentParser(
         description="Orange Code - AI Coding Assistant with Tool Management"
     )
@@ -398,7 +396,7 @@ def main():
         "--list-skills", action="store_true", help="List all available skills"
     )
 
-    # 解析已知参数
+    # Parse known arguments
     known_args, remaining_args = parser.parse_known_args()
 
     try:
@@ -412,7 +410,7 @@ def main():
 
         console = Console()
 
-        # 处理特殊命令
+        # Handle special commands
         if known_args.list_tools:
             _list_all_tools(console)
             return
@@ -421,13 +419,13 @@ def main():
             _list_all_skills(console)
             return
 
-        # 设置活跃技能和重试配置
+        # Set active skills and retry configuration
         active_skills = known_args.skills or ["developer_assistant"]
 
         # Initialize with retry mechanism
         # These will be set when AgentScheduler is created
 
-        # 设置活跃技能
+        # Set active skills
         active_skills = known_args.skills or ["developer_assistant"]
 
         console.print(
@@ -521,7 +519,7 @@ def main():
 
 
 def _list_all_tools(console: Console):
-    """列出所有注册的工具"""
+    """List all registered tools"""
     from rich.table import Table
 
     tools = get_all_tools()
@@ -541,7 +539,7 @@ def _list_all_tools(console: Console):
 
 
 def _list_all_skills(console: Console):
-    """列出所有可用的技能"""
+    """List all available skills"""
     from rich.table import Table
 
     table = Table(title="🎯 Available Skills")
@@ -563,7 +561,7 @@ def _list_all_skills(console: Console):
 
 
 def _show_available_tools(console: Console, scheduler):
-    """显示当前可用的工具和重试统计"""
+    """Display currently available tools and retry statistics"""
     from rich.table import Table
 
     # Tools table

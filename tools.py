@@ -1,6 +1,6 @@
 """
-Tool registration和管理系统
-基于Decorator的Tool registration，支持动态Permission management
+Tool registration and management system
+Decorator-based tool registration with dynamic permission management
 """
 
 import inspect
@@ -10,14 +10,14 @@ from enum import Enum
 
 
 class PermissionLevel(Enum):
-    """权限级别枚举"""
+    """Permission level enumeration"""
 
-    READ_ONLY = "read_only"  # 只读权限
-    FILE_OPERATIONS = "file_ops"  # File operations权限
-    SHELL_COMMANDS = "shell_cmds"  # Shell commands权限
-    NETWORK_ACCESS = "network"  # 网络访问权限
-    SYSTEM_ADMIN = "system_admin"  # System administration员权限
-    ALL_PERMISSIONS = "all"  # 所有权限
+    READ_ONLY = "read_only"  # Read-only permissions
+    FILE_OPERATIONS = "file_ops"  # File operations permissions
+    SHELL_COMMANDS = "shell_cmds"  # Shell commands permissions
+    NETWORK_ACCESS = "network"  # Network access permissions
+    SYSTEM_ADMIN = "system_admin"  # System administration permissions
+    ALL_PERMISSIONS = "all"  # All permissions
 
 
 class SkillRestriction(Enum):
@@ -31,60 +31,61 @@ class SkillRestriction(Enum):
     ALL_SKILLS = "all"  # All skills
 
 
-# 全局Tool registration表
-_tool_registry: Dict[str, Dict[str, Any]] = {}
+# Global tool registration table
+REGISTERED_TOOLS: Dict[str, Dict[str, Any]] = {}
 
-# 激活的技能权限
-_active_skill_permissions: Dict[str, List[PermissionLevel]] = {}
+# Active skill permissions
+ACTIVE_SKILL_PERMISSIONS: List[SkillRestriction] = []
 
 
 def function_tool(
-    name: str,
-    description: str,
+    name: str = None,
+    description: str = None,
     permissions: List[PermissionLevel] = None,
     skill_types: List[SkillRestriction] = None,
 ):
     """
-    Tool registrationDecorator
+    Decorator for registering tools with metadata
 
     Args:
-        name: 工具名称
-        description: 工具描述
-        permissions: 所需权限列表
-        skill_types: 允许的技能类型列表
+        name: Tool name
+        description: Tool description
+        permissions: Required permission list
+        skill_types: Allowed skill type list
     """
 
-    def decorator(func: Callable) -> Callable:
-        # 获取函数签名和参数模型
+    def decorator(func):
+        # Get function signature and parameter model
         sig = inspect.signature(func)
-        parameters = {}
+        params = list(sig.parameters.values())
 
-        for param_name, param in sig.parameters.items():
-            param_type = param.annotation
+        # Create Pydantic field
+        fields = {}
+        for param in params:
+            field_type = (
+                param.annotation if param.annotation != inspect.Parameter.empty else str
+            )
             default_value = (
-                param.default if param.default != inspect.Parameter.empty else None
+                param.default if param.default != inspect.Parameter.empty else ...
             )
 
-            # 创建Pydantic字段
-            if default_value is not None:
-                field = Field(
-                    default=default_value, description=f"Parameter {param_name}"
-                )
-            else:
-                field = Field(description=f"Parameter {param_name}")
+            field_info = Field(
+                default=default_value if default_value != ... else ...,
+                description=f"Parameter: {param.name}",
+            )
+            fields[param.name] = (field_type, field_info)
 
-            parameters[param_name] = (param_type, field)
+        # Register tool
+        tool_name = name or func.__name__
+        tool_description = description or func.__doc__ or "No description"
 
-        # 注册工具
-        _tool_registry[name] = {
+        REGISTERED_TOOLS[tool_name] = {
             "function": func,
-            "description": description,
-            "parameters": parameters,
-            "permissions": permissions or [PermissionLevel.ALL_PERMISSIONS],
+            "name": tool_name,
+            "description": tool_description,
+            "permissions": permissions or [PermissionLevel.READ_ONLY],
             "skill_types": skill_types or [SkillRestriction.ALL_SKILLS],
-            "name": name,
-            "module": func.__module__,
-            "docstring": func.__doc__ or "",
+            "parameters": fields,
         }
 
         return func
@@ -92,188 +93,213 @@ def function_tool(
     return decorator
 
 
-class SkillRestrictionGuard:
-    """技能Permission guard"""
+class PermissionGuard:
+    """Skill permission guard"""
 
-    def __init__(self, active_skills: List[str]):
-        self.active_skills = active_skills
+    def __init__(self, active_skills: List[SkillRestriction] = None):
+        """
+        Initialize permission guard
+
+        Args:
+            active_skills: Active skill list
+        """
+        self.active_skills = active_skills or [SkillRestriction.ALL_SKILLS]
+        self.skill_permissions: Dict[SkillRestriction, List[PermissionLevel]] = {}
         self._load_default_permissions()
 
     def _load_default_permissions(self):
-        """加载默认技能权限配置"""
-        default_permissions = {
+        """Load default skill permission configuration"""
+        self.skill_permissions = {
             SkillRestriction.FILE_MANAGER: [
                 PermissionLevel.READ_ONLY,
                 PermissionLevel.FILE_OPERATIONS,
             ],
-            SkillRestriction.CODE_ANALYZER: [
-                PermissionLevel.READ_ONLY,
-                PermissionLevel.FILE_OPERATIONS,
-            ],
+            SkillRestriction.CODE_ANALYZER: [PermissionLevel.READ_ONLY],
             SkillRestriction.SYSTEM_INFO: [
                 PermissionLevel.READ_ONLY,
-                PermissionLevel.SYSTEM_ADMIN,
+                PermissionLevel.NETWORK_ACCESS,
             ],
             SkillRestriction.DEVELOPER_ASSISTANT: [
                 PermissionLevel.READ_ONLY,
                 PermissionLevel.FILE_OPERATIONS,
                 PermissionLevel.SHELL_COMMANDS,
-                PermissionLevel.NETWORK_ACCESS,
             ],
+            SkillRestriction.SYSTEM_ADMIN: [PermissionLevel.ALL_PERMISSIONS],
         }
 
+    def check_permission(self, tool_name: str) -> bool:
+        """
+        Check if current skill allows using specified tool
+
+        Args:
+            tool_name: Tool name to check
+
+        Returns:
+            True if allowed, False otherwise
+        """
+        if tool_name not in REGISTERED_TOOLS:
+            return False
+
+        tool = REGISTERED_TOOLS[tool_name]
+        required_permissions = tool.get("permissions", [])
+        required_skills = tool.get("skill_types", [])
+
+        # If no skill type specified, check against active skill list
+        if not required_skills:
+            return True
+
+        # Check specific skill type permissions
         for skill in self.active_skills:
-            if skill in default_permissions:
-                _active_skill_permissions[skill] = default_permissions[skill]
-            else:
-                _active_skill_permissions[skill] = [PermissionLevel.ALL_PERMISSIONS]
+            if skill in required_skills:
+                skill_permissions = self.skill_permissions.get(skill, [])
+                for required_perm in required_permissions:
+                    if required_perm in skill_permissions:
+                        return True
 
-    def can_use_tool(self, tool_name: str, skill_type: str = None) -> bool:
-        """检查当前技能是否允许使用指定工具"""
-        if tool_name not in _tool_registry:
-            return False
+        return False
 
-        tool_info = _tool_registry[tool_name]
-
-        # 如果没有指定技能类型，使用激活的技能列表检查
-        if skill_type is None:
-            for skill in self.active_skills:
-                if self._check_tool_permission_for_skill(tool_info, skill):
-                    return True
-            return False
-
-        # 检查特定技能类型的权限
-        return self._check_tool_permission_for_skill(tool_info, skill_type)
-
-    def _check_tool_permission_for_skill(
-        self, tool_info: Dict[str, Any], skill_type: str
+    def is_skill_allowed_for_tool(
+        self, skill: SkillRestriction, tool_name: str
     ) -> bool:
-        """检查工具对特定技能类型是否可用"""
-        if skill_type not in _active_skill_permissions:
+        """
+        Check if tool is available for specific skill type
+
+        Args:
+            skill: Skill type to check
+            tool_name: Tool name to check
+
+        Returns:
+            True if allowed, False otherwise
+        """
+        if tool_name not in REGISTERED_TOOLS:
             return False
 
-        allowed_permissions = _active_skill_permissions[skill_type]
-        tool_permissions = tool_info["permissions"]
+        tool = REGISTERED_TOOLS[tool_name]
+        required_skills = tool.get("skill_types", [])
 
-        # 检查权限是否有交集
-        return any(perm in allowed_permissions for perm in tool_permissions)
+        # Check if skill type permissions have intersection
+        return (
+            skill in required_skills or SkillRestriction.ALL_SKILLS in required_skills
+        )
 
-    def get_restricted_tools(self, skill_type: str = None) -> List[str]:
-        """获取当前限制下可用的工具列表"""
-        available_tools = []
+    def get_restricted_tools(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get tool list available under current restrictions
 
-        for tool_name, tool_info in _tool_registry.items():
-            if skill_type is None:
-                # 检查任何激活的技能
-                for skill in self.active_skills:
-                    if self._check_tool_permission_for_skill(tool_info, skill):
-                        available_tools.append(tool_name)
-                        break
-            else:
-                # 检查特定技能类型
-                if self._check_tool_permission_for_skill(tool_info, skill_type):
-                    available_tools.append(tool_name)
+        Returns:
+            Dictionary of available tools
+        """
+        available_tools = {}
+
+        for tool_name, tool_data in REGISTERED_TOOLS.items():
+            # Check any activated skill
+            for skill in self.active_skills:
+                if self.is_skill_allowed_for_tool(skill, tool_name):
+                    available_tools[tool_name] = tool_data
+                    break
 
         return available_tools
 
+    def get_all_tools(self) -> Dict[str, Dict[str, Any]]:
+        """Get all registered tools"""
+        return REGISTERED_TOOLS.copy()
 
-def get_all_tools() -> Dict[str, Dict[str, Any]]:
-    """获取所有注册的工具"""
-    return _tool_registry.copy()
-
-
-def register_skill_permissions(active_skills: List[str]):
-    """注册激活的技能权限"""
-    global _active_skill_permissions
-    _active_skill_permissions.clear()
-
-    guard = SkillRestrictionGuard(active_skills)
-    return guard
+    def register_active_skills(self, skills: List[SkillRestriction]):
+        """Register active skill permissions"""
+        self.active_skills = skills
 
 
-# Pydantic模型示例
-class FileReadModel(BaseModel):
-    """文件读取模型"""
+# Pydantic model examples
+class ReadFileModel(BaseModel):
+    """File read model"""
 
-    path: str = Field(..., description="要读取的文件路径")
-    encoding: str = Field(default="utf-8", description="文件编码")
+    path: str = Field(..., description="File path to read")
+    encoding: str = Field(default="utf-8", description="File encoding")
 
 
-class FileWriteModel(BaseModel):
-    """文件写入模型"""
+class WriteFileModel(BaseModel):
+    """File write model"""
 
-    path: str = Field(..., description="要写入的文件路径")
-    content: str = Field(..., description="要写入的内容")
-    encoding: str = Field(default="utf-8", description="文件编码")
-    create_dirs: bool = Field(default=True, description="是否自动创建目录")
+    path: str = Field(..., description="File path to write")
+    content: str = Field(..., description="Content to write")
+    encoding: str = Field(default="utf-8", description="File encoding")
+    create_dirs: bool = Field(default=True, description="Auto-create directories")
 
 
 class ShellCommandModel(BaseModel):
-    """Shell commands执行模型"""
+    """Shell command execution model"""
 
-    command: str = Field(..., description="要执行的Shell commands")
-    confirm: bool = Field(default=True, description="是否需要用户确认")
-    timeout: int = Field(default=30, description="超时时间(秒)")
+    command: str = Field(..., description="Shell command to execute")
+    confirm: bool = Field(default=True, description="Require user confirmation")
+    timeout: int = Field(default=30, description="Timeout in seconds")
 
 
 class ListFilesModel(BaseModel):
-    """文件列表模型"""
+    """File list model"""
 
-    path: str = Field(default=".", description="要列出的目录路径")
-    show_hidden: bool = Field(default=False, description="是否显示隐藏文件")
-    recursive: bool = Field(default=False, description="是否递归列出")
+    path: str = Field(default=".", description="Directory path to list")
+    show_hidden: bool = Field(default=False, description="Show hidden files")
+    recursive: bool = Field(default=False, description="Recursive listing")
 
 
-# 示例工具定义
+# Example tool definitions
 @function_tool(
     name="read_file",
-    description="读取文件内容",
-    permissions=[PermissionLevel.READ_ONLY, PermissionLevel.FILE_OPERATIONS],
-    skill_types=[SkillRestriction.FILE_MANAGER, SkillRestriction.DEVELOPER_ASSISTANT],
+    description="Read file contents",
+    permissions=[PermissionLevel.READ_ONLY],
+    skill_types=[
+        SkillRestriction.FILE_MANAGER,
+        SkillRestriction.DEVELOPER_ASSISTANT,
+        SkillRestriction.SYSTEM_ADMIN,
+    ],
 )
-def enhanced_read_file(model: FileReadModel) -> str:
-    """增强的文件读取功能"""
+def read_file(model: ReadFileModel) -> str:
+    """Enhanced file reading functionality"""
     try:
         with open(model.path, "r", encoding=model.encoding) as f:
             content = f.read()
-        return f"✅ 成功读取文件 {model.path}，内容长度: {len(content)} 字符"
+        return f"✅ Successfully read file {model.path}, content length: {len(content)} characters"
     except FileNotFoundError:
-        return f"❌ 文件未找到: {model.path}"
+        return f"❌ File not found: {model.path}"
     except Exception as e:
-        return f"❌ 读取文件时出错: {str(e)}"
+        return f"❌ Error reading file: {str(e)}"
 
 
 @function_tool(
     name="write_file",
-    description="写入文件内容",
+    description="Write file contents",
     permissions=[PermissionLevel.FILE_OPERATIONS],
-    skill_types=[SkillRestriction.FILE_MANAGER, SkillRestriction.DEVELOPER_ASSISTANT],
+    skill_types=[SkillRestriction.DEVELOPER_ASSISTANT, SkillRestriction.SYSTEM_ADMIN],
 )
-def enhanced_write_file(model: FileWriteModel) -> str:
-    """增强的文件写入功能"""
+def write_file(model: WriteFileModel) -> str:
+    """Enhanced file writing functionality"""
     try:
-        if model.create_dirs:
-            import os
+        import os
 
-            os.makedirs(os.path.dirname(model.path) or ".", exist_ok=True)
+        if model.create_dirs:
+            os.makedirs(os.path.dirname(model.path), exist_ok=True)
 
         with open(model.path, "w", encoding=model.encoding) as f:
             f.write(model.content)
-        return f"✅ 成功写入文件 {model.path}，内容长度: {len(model.content)} 字符"
+        return f"✅ Successfully wrote file {model.path}, content length: {len(model.content)} characters"
     except Exception as e:
-        return f"❌ 写入文件时出错: {str(e)}"
+        return f"❌ Error writing file: {str(e)}"
 
 
 @function_tool(
     name="execute_shell",
-    description="执行Shell commands",
+    description="Execute shell commands",
     permissions=[PermissionLevel.SHELL_COMMANDS],
     skill_types=[SkillRestriction.DEVELOPER_ASSISTANT, SkillRestriction.SYSTEM_ADMIN],
 )
-def enhanced_shell_command(model: ShellCommandModel) -> str:
-    """增强的Shell commands执行功能"""
+def execute_shell(model: ShellCommandModel) -> str:
+    """Enhanced shell command execution functionality"""
     try:
         import subprocess
+
+        if model.confirm:
+            print(f"Confirm execution: {model.command}")
+            # In production, add user confirmation here
 
         result = subprocess.run(
             model.command,
@@ -283,63 +309,87 @@ def enhanced_shell_command(model: ShellCommandModel) -> str:
             timeout=model.timeout,
         )
 
-        return f"✅ 命令执行完成\n输出: {result.stdout}\n错误: {result.stderr}\n返回码: {result.returncode}"
+        return f"✅ Command execution completed\nOutput: {result.stdout}\nError: {result.stderr}\nReturn code: {result.returncode}"
     except subprocess.TimeoutExpired:
-        return f"❌ 命令执行超时 ({model.timeout}秒)"
+        return f"❌ Command execution timeout ({model.timeout} seconds)"
     except Exception as e:
-        return f"❌ 命令执行失败: {str(e)}"
+        return f"❌ Command execution failed: {str(e)}"
 
 
 @function_tool(
     name="list_files",
-    description="列出文件和目录",
-    permissions=[PermissionLevel.READ_ONLY, PermissionLevel.FILE_OPERATIONS],
-    skill_types=[SkillRestriction.FILE_MANAGER, SkillRestriction.SYSTEM_INFO],
+    description="List files and directories",
+    permissions=[PermissionLevel.READ_ONLY],
+    skill_types=[
+        SkillRestriction.FILE_MANAGER,
+        SkillRestriction.DEVELOPER_ASSISTANT,
+        SkillRestriction.SYSTEM_ADMIN,
+    ],
 )
-def enhanced_list_files(model: ListFilesModel) -> str:
-    """增强的文件列表功能"""
+def list_files(model: ListFilesModel) -> str:
+    """Enhanced file listing functionality"""
     try:
         import os
 
         if model.recursive:
             files = []
             for root, dirs, filenames in os.walk(model.path):
-                if not model.show_hidden:
-                    filenames = [f for f in filenames if not f.startswith(".")]
-                    dirs = [d for d in dirs if not d.startswith(".")]
-                else:
-                    filenames = filenames
-                    dirs = dirs
-                files.extend([os.path.join(root, f) for f in filenames])
-                files.extend([os.path.join(root, d + "/") for d in dirs])
+                for filename in filenames:
+                    if model.show_hidden or not filename.startswith("."):
+                        files.append(os.path.join(root, filename))
         else:
             items = os.listdir(model.path)
-            if not model.show_hidden:
-                items = [item for item in items if not item.startswith(".")]
-            else:
-                items = items
-            files = [os.path.join(model.path, item) for item in items]
+            files = [
+                item for item in items if model.show_hidden or not item.startswith(".")
+            ]
 
-        return f"✅ 目录 {model.path} 内容:\n" + "\n".join(files)
+        return f"✅ Directory {model.path} contents:\n" + "\n".join(files)
     except Exception as e:
-        return f"❌ 列出文件失败: {str(e)}"
+        return f"❌ Failed to list files: {str(e)}"
 
 
-# 示例权限受限的技能
+# Example permission-restricted skills
 @function_tool(
     name="safe_file_operations",
-    description="安全的File operations（只读）",
+    description="Secure file operations (read-only)",
     permissions=[PermissionLevel.READ_ONLY],
-    skill_types=[SkillRestriction.CODE_ANALYZER],
+    skill_types=[SkillRestriction.FILE_MANAGER, SkillRestriction.CODE_ANALYZER],
 )
-def read_only_file_analyzer(model: FileReadModel) -> str:
-    """只读文件分析功能"""
+def safe_file_operations(model: ReadFileModel) -> str:
+    """Read-only file analysis functionality"""
     try:
         with open(model.path, "r", encoding=model.encoding) as f:
             content = f.read()
 
-        # 只进行分析，不修改文件
+        # Only perform analysis, don't modify files
         lines = content.split("\n")
-        return f"📄 文件分析 {model.path}:\n行数: {len(lines)}\n字符数: {len(content)}\n是否为空: {'是' if not content.strip() else '否'}"
+        return f"📄 File analysis {model.path}:\nLine count: {len(lines)}\nCharacter count: {len(content)}\nIs empty: {'Yes' if not content.strip() else 'No'}"
     except Exception as e:
-        return f"❌ 文件分析失败: {str(e)}"
+        return f"❌ File analysis failed: {str(e)}"
+
+
+def get_all_tools() -> Dict[str, Any]:
+    """Get all registered tools"""
+    return REGISTERED_TOOLS.copy()
+
+
+def register_skill_permissions(skills: List[str]) -> PermissionGuard:
+    """Register skill permissions for specified skills"""
+    skill_restrictions = []
+    for skill in skills:
+        if skill.endswith("_assistant"):
+            skill_name = skill.replace("_assistant", "")
+            try:
+                skill_restrictions.append(SkillRestriction[skill_name.upper()])
+            except KeyError:
+                pass
+        else:
+            try:
+                skill_restrictions.append(SkillRestriction[skill.upper()])
+            except KeyError:
+                pass
+
+    if not skill_restrictions:
+        skill_restrictions = [SkillRestriction.ALL_SKILLS]
+
+    return PermissionGuard(skill_restrictions)
