@@ -7,7 +7,6 @@ This is the Orange Code project - an autonomous AI coding assistant with advance
 - **Python 3.11** - Primary programming language
 - **Ollama** - LLM inference with qwen2.5-coder:3b model
 - **Rich** - Terminal UI and formatting
-- **Kubernetes** - Deployment platform
 
 ## Code Standards
 - Use Python type hints where possible
@@ -17,18 +16,20 @@ This is the Orange Code project - an autonomous AI coding assistant with advance
 - Handle exceptions gracefully
 
 ## Common Commands
-- **Development**: `cd test-no-rag && ./run.sh`
-- **Testing**: `uv run python test_environment.py`
-- **Deployment**: `kubectl apply -k deploy/deploy-no-rag/`
-- **Dependencies**: `uv add package-name`
+- **Development**: `cd tests && ./run.sh`
+- **Direct Usage**: `python3 orangecode.py`
+- **Dependencies**: `pip install package-name`
 
 ## Project Structure
 ```
-agent_no_rag.py          # Main no-RAG agent with scheduler
-utils.py                 # Shared utilities
-cli.py                   # CLI entry point
-tests/                    # Local testing environment
-deploy/                   # Kubernetes deployment
+agent.py              # Main scheduler with OrangeCodeScheduler
+orangecode.py         # CLI entry point
+tool_executor.py      # Tool execution engine
+tools.py              # Tool definitions and permissions
+retry.py             # LLM retry mechanism
+utils.py              # Shared utilities
+tests/                # Test environment
+AGENTS.md             # This file - project context
 ```
 
 ## Agent Behavior Guidelines
@@ -40,3 +41,21 @@ deploy/                   # Kubernetes deployment
 
 ## Current Working Directory Context
 The agent operates in the project root directory and has access to all source files.
+
+## Available Skills
+- **General**: General assistance
+- **Developer**: Coding and development tasks
+- **Analyst**: Code analysis and review
+- **System**: System administration
+
+## Available Tools
+- `read_file` - Read file contents
+- `write_file` - Write content to files
+- `execute_shell` - Execute shell commands
+- `list_files` - List directory contents
+- `safe_file_operations` - Secure file operations
+
+## LLM Configuration
+- **Model**: qwen2.5-coder:3b
+- **Host**: Configurable via OLLAMA_HOST environment variable
+- **Retry**: Intelligent error handling with exponential backoff

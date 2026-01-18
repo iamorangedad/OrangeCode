@@ -5,90 +5,89 @@ A production-ready autonomous coding assistant with advanced scheduler functiona
 ## 🚀 Quick Start
 
 ```bash
-# Install as system command
-pip install -e .
+# Install dependencies
+pip install ollama rich requests pydantic
 
-# Use immediately
-orangecode "write a python function for fibonacci"
+# Start Orange Code
+python3 orangecode.py
 
-# Show configuration  
-orangecode config
-
-# Interactive mode
-orangecode
+# Or use test environment
+cd tests && ./run.sh
 ```
 
-## 🚀 Key Features
+## 🎯 Key Features
 
-### 🎯 Advanced Scheduler Architecture
+### Advanced Scheduler Architecture
 - **Lazy Loading**: Fast CLI startup with deferred initialization
 - **Concurrency Control**: Prevents API overload with semaphore limits
 - **Streaming Display**: Real-time output with tool call synchronization
-- **ESC Cancellation**: Immediate interrupt via keyboard detection
-- **Project Context**: Automatic loading of project context
+- **Project Context**: Automatic loading of project configuration
 
-### 🛠️ Tool Management System
-- **Decorator-Based Registration**: Simple `@function_tool` decorator
-- **Permission Levels**: 6 granular access control levels
-- **Skill Restrictions**: Role-based tool access control
-- **Dynamic Filtering**: Runtime tool filtering based on active skills
+### Tool Management System
+- **5 Core Tools**: File operations, shell commands, code analysis
+- **Permission Levels**: 4 granular access control levels
+- **Skill-Based Access**: Role-based tool filtering
 
-### 🔄 Intelligent LLM Retry Mechanism
-- **Exponential Backoff**: `delay * base^retry_count`
-- **Random Jitter**: Prevents thundering herd problems
-- **Error Classification**: 7 types of LLM API errors
-- **Rich Logging**: Detailed retry statistics and progress tracking
-- **Configurable Parameters**: Flexible retry configuration
+### LLM Integration
+- **Ollama Support**: Local LLM integration with qwen2.5-coder:3b
+- **Retry Mechanism**: Intelligent error handling with exponential backoff
+- **Rate Limiting**: Built-in request throttling
 
-### 🎮 User Experience
-- **Rich Terminal UI**: Beautiful formatting with live updates
-- **Progress Tracking**: Visual feedback on retry attempts and success rates
-- **Error Handling**: Clear error messages with suggestions
+## 📋 Available Skills
 
-## 🏗️ Architecture
+Choose your expertise level:
 
-```
-mermaid
-graph TD
-    A[Orange Code CLI] --> B[AgentScheduler] --> C[LLM Client]
-    A[Tool Registry] --> D[Permission Guard] --> E[Tool Executor]
-    A[Project Context] --> F[Core Agent Functions]
-    A[Streaming Display] --> G[Rich Console UI]
-    A[ESC Monitoring] --> H[User Input]
-    A[Concurrency Control] --> I[Tool Execution]
-```
+1. **Developer** - Coding and development tasks
+2. **Analyst** - Code analysis and review
+3. **System** - System administration
+4. **General** - General assistance
 
-## 📁 File Structure
+## 🛠️ Available Tools
 
-```
-📁 Orange Code/
-├── 🤖 agent.py              # Main AI agent
-├── 🛠️ utils.py              # Shared utility functions  
-├── 🔄 retry.py             # LLM retry mechanism
-├── 🧪 tool_executor.py      # Enhanced tool execution
-├── 🎯 cli.py                # CLI entry point
-├── 🧪 tests/                # Local testing environment
-├── 📋 AGENTS.md              # Project context configuration
-├── 📚 requirements.txt           # Dependencies
+- `read_file` - Read file contents
+- `write_file` - Write content to files
+- `execute_shell` - Execute shell commands
+- `list_files` - List directory contents
+- `safe_file_operations` - Secure file operations
+
+## 🔧 Configuration
+
+Set environment variables:
+
+```bash
+export OLLAMA_HOST="http://localhost:11434"
+export OLLAMA_MODEL="qwen2.5-coder:3b"
 ```
 
-## 🚀 Deployment Options
+## 📁 Project Structure
 
-- **Local Development** (Recommended)
-- **No Container Overhead**: Direct execution
-- **Fast Iteration**: Immediate code changes
+```
+Orange Code/
+├── agent.py              # Main scheduler implementation
+├── orangecode.py         # CLI entry point
+├── tool_executor.py      # Tool execution engine
+├── tools.py              # Tool definitions and permissions
+├── retry.py             # LLM retry mechanism
+├── utils.py              # Shared utilities
+├── tests/                # Test environment
+├── AGENTS.md             # Project context (for AI)
+└── requirements.txt       # Python dependencies
+```
 
-## 🎮 User Experience
+## 📚 Documentation
 
-- **Rich Terminal UI**: Beautiful formatting with live updates
-- **Progress Tracking**: Visual feedback on operations
-- **Error Handling**: Clear messages and suggestions
+- `AGENTS.md` - Project context for AI agent
+- `requirements.txt` - Python dependencies
+- This README provides all necessary usage information
 
-## 📚 Benefits
+## 🤝 Contributing
 
-- **Production Ready**: Enterprise-grade error handling and reliability
-- **Developer Friendly**: Simple CLI with rich documentation
-- **High Performance**: Optimized for local execution
-- **Maintainable**: Clean, focused codebase
-- **Secure**: Permission-based tool access control
-- **Concurrent Safe**: Intelligent concurrency management
+This is a production-ready AI coding assistant. Feel free to use and adapt for your needs.
+
+## 📄 License
+
+[Add your license here]
+
+## 🎊 Status
+
+✅ Production Ready - All core features implemented and tested
