@@ -32,6 +32,7 @@ from rich.text import Text
 from rich import box
 from utils import read_file, write_file, list_files, execute_command
 from tools import get_all_tools, register_skill_permissions, SkillRestriction
+from llm_retry import create_retry_aware_client, LLMRetryConfig
 
 
 class StreamingDisplayManager:
@@ -105,20 +106,30 @@ class StreamingDisplayManager:
 class AgentScheduler:
     """Main scheduler with lazy loading and concurrency control"""
 
-    def __init__(self, active_skills: List[str] = None):
+def __init__(self, active_skills: List[str] = None):
         self.console = Console()
         self.client: Optional[ollama.Client] = None
+        self.retry_client = None  # Enhanced client with retry mechanism
         self.conversation_history: List[Dict[str, Any]] = []
         self.project_context: str = ""
         self.semaphore = asyncio.Semaphore(10)
         self.display_manager = StreamingDisplayManager(self.console)
         self.is_cancelled = False
         self.keyboard_thread: Optional[threading.Thread] = None
-
+        
         # Lazy loading flag
         self._agent_initialized = False
-
-        # 工具Permission management
+        
+        # Retry configuration
+        self.retry_config = LLMRetryConfig(
+            max_retries=3,
+            base_delay=1.0,
+            max_delay=30.0,
+            exponential_base=2.0,
+            jitter_factor=0.1
+        )
+        
+        # Tool permission management
         self.active_skills = active_skills or ["developer_assistant"]
         self.permission_guard = register_skill_permissions(self.active_skills)
         self.available_tools = self.permission_guard.get_restricted_tools()
@@ -230,62 +241,36 @@ Note: Tools are filtered by active skill permissions.
         return "\n".join(prompt_parts)
 
     async def _execute_tool(self, tool: str, args: Dict[str, Any], call_id: str) -> str:
-        """Execute a tool with async support using the tool registry"""
-        # 检查工具权限
+        """Execute a tool with async support using LLM retry mechanism"""
+        # Check tool permissions
         if not self.permission_guard.can_use_tool(tool):
-            error_msg = (
-                f"❌ 权限不足：当前技能 '{self.active_skills}' 不允许使用工具 '{tool}'"
+            error_msg = f"❌ 权限不足：当前技能 '{self.active_skills}' 不允许使用工具 '{tool}'"
+            self.display_manager.add_tool_call(call_id, {"tool": tool, "args": args})
+            self.display_manager.complete_tool_call(call_id, error_msg)
+            return error_msg
+        
+        # Use enhanced tool executor for complex operations
+        from tool_executor import ToolExecutor
+        
+        # Create enhanced tool executor with retry mechanism
+        tool_executor = ToolExecutor(self.retry_client)
+        
+        # For complex or risky operations, use LLM planning and validation
+        if tool_name in ["execute_shell"]:
+            return await tool_executor.execute_tool_with_llm_validation(
+                tool_name, tool_args, 
+                args.get("command", "")
             )
-            self.display_manager.add_tool_call(call_id, {"tool": tool, "args": args})
-            self.display_manager.complete_tool_call(call_id, error_msg)
-            return error_msg
-
-        # 获取工具函数
-        tool_registry = get_all_tools()
-        if tool not in tool_registry:
-            error_msg = f"❌ 未知工具：'{tool}'"
-            self.display_manager.add_tool_call(call_id, {"tool": tool, "args": args})
-            self.display_manager.complete_tool_call(call_id, error_msg)
-            return error_msg
-
-        tool_info = tool_registry[tool]
-        tool_function = tool_info["function"]
-
-        self.display_manager.add_tool_call(call_id, {"tool": tool, "args": args})
-
-        try:
-            # 验证参数类型
-            sig = inspect.signature(tool_function)
-            bound_args = {}
-
-            for param_name, param in sig.parameters.items():
-                if param_name in args:
-                    # 使用Pydantic模型验证参数
-                    param_type = param.annotation
-                    try:
-                        if (
-                            hasattr(param_type, "__origin__")
-                            and param_type.__origin__ is dict
-                        ):
-                            # 如果参数是Pydantic模型
-                            bound_args[param_name] = param_type(**args[param_name])
-                        else:
-                            bound_args[param_name] = args[param_name]
-                    except Exception as validation_error:
-                        error_msg = (
-                            f"❌ 参数验证失败 '{param_name}': {str(validation_error)}"
-                        )
-                        self.display_manager.complete_tool_call(call_id, error_msg)
-                        return error_msg
-
-            # 执行工具函数
-            result = tool_function(**bound_args)
-
-        except Exception as e:
-            result = f"❌ 执行工具 '{tool}' 失败: {str(e)}"
-
-        self.display_manager.complete_tool_call(call_id, result)
-        return result
+        
+        # For other operations, use LLM planning
+        elif tool_name in ["read_file", "write_file", "list_files"]:
+            return await tool_executor.execute_tool_with_llm_planning(
+                tool_name, tool_args, user_query
+            )
+        
+        # For simple operations, execute directly with retry
+        else:
+            return await tool_executor.execute_tool_with_retry(tool_name, args)
 
     async def _process_streaming_response(self, user_query: str) -> str:
         """Process streaming response from Ollama"""
@@ -479,6 +464,38 @@ def main():
         if known_args.list_skills:
             _list_all_skills(console)
             return
+            
+        # 设置活跃技能和重试配置
+        active_skills = known_args.skills or ["developer_assistant"]
+        
+        # 重新初始化 AgentScheduler 以使用重试机制
+        self.active_skills = active_skills or ["developer_assistant"]
+        self.permission_guard = register_skill_permissions(self.active_skills)
+        self.available_tools = self.permission_guard.get_restricted_tools()
+        
+        # 如果没有指定技能，使用默认的 developer助手
+        if not known_args.skills:
+            active_skills = ["developer_assistant"]
+        
+        console.print(
+            Panel(
+                f"[bold cyan]🍊 Orange Code - AI Coding Assistant[/bold cyan]\n\n"
+                f"[yellow]Active Skills:[/yellow] [green]{', '.join(active_skills)}[/green]\n"
+                f"[yellow]Commands:[/yellow]\n"
+                "• Type your coding questions directly\n"
+                "• [green]config[/green] - Show configuration\n" 
+                "• [green]tools[/green] - List available tools\n"
+                "• [green]quit[/green]/[green]exit[/green] - Exit\n"
+                "• [green]ESC[/green] - Cancel current operation\n\n"
+                "[yellow]Example:[/yellow]\n"
+                "  orangecode> Write a Python function for fibonacci\n"
+                "  orangecode> Read main.py and add logging\n"
+                "  orangecode --skills file_manager --list-tools",
+                title="🤖 Welcome",
+                border_style="cyan",
+                box=box.ROUNDED,
+            )
+        )
         
         # 设置活跃技能
         active_skills = known_args.skills or ["developer_assistant"]
@@ -519,6 +536,7 @@ def main():
                     scheduler._ensure_agent_initialized()
                     ollama_host = os.getenv("OLLAMA_HOST", "http://10.0.0.55:11434")
                     available_tools = ', '.join(scheduler.available_tools)
+                    retry_stats = scheduler.retry_client.get_stats() if hasattr(scheduler, 'retry_client') else {}
                     console.print(
                         Panel(
                             f"[bold cyan]🍊 Orange Code Configuration[/bold cyan]\n\n"
@@ -526,7 +544,8 @@ def main():
                             f"Model: [green]qwen2.5-coder:3b[/green]\n"
                             f"Active Skills: [green]{', '.join(scheduler.active_skills)}[/green]\n"
                             f"Available Tools: [green]{available_tools}[/green]\n"
-                            f"Project Context: [green]{scheduler.project_context[:100]}...[/green]" if len(scheduler.project_context) > 100 else f"Project Context: [green]{scheduler.project_context}[/green]",
+                            f"Project Context: [green]{scheduler.project_context[:100]}...[/green]" if len(scheduler.project_context) > 100 else f"Project Context: [green]{scheduler.project_context}[/green]\n"
+                            f"[yellow]Retry Stats:[/yellow] Total: {retry_stats.get('total_calls', 0)}, Success: {retry_stats.get('successful_calls', 0)}[/green]"
                             title="⚙️ Config",
                             border_style="cyan",
                             box=box.ROUNDED,
@@ -600,18 +619,44 @@ def _list_all_skills(console: Console):
 
 
 def _show_available_tools(console: Console, scheduler):
-    """显示当前可用的工具"""
+    """显示当前可用的工具和重试统计"""
     from rich.table import Table
     
     table = Table(title=f"🛠️ Available Tools (Skills: {', '.join(scheduler.active_skills)})")
     table.add_column("Tool Name", style="cyan")
     table.add_column("Description", style="green")
+    table.add_column("Type", style="blue")
+    
+    # Get retry statistics
+    retry_stats = scheduler.retry_client.get_stats() if hasattr(scheduler, 'retry_client') else {}
+    
+    table = Table(title=f"📊 Retry Statistics")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="green")
+    table.add_row("Total Calls", f"{retry_stats.get('total_calls', 0)}")
+    table.add_row("Success Rate", f"{retry_stats.get('successful_calls', 0) if retry_stats.get('total_calls', 0) else 0:.1%}")
+    table.add_row("Failed Calls", f"{retry_stats.get('failed_calls', 0)}")
+    
+    if retry_stats['total_calls'] > 0:
+        table.add_row("Success Rate", f"{retry_stats.get('successful_calls', 0) if retry_stats.get('total_calls', 0) else 0:.1%}")
     
     for tool_name in scheduler.available_tools:
         tool_info = get_all_tools()[tool_name]
-        table.add_row(tool_name, tool_info['description'])
+        table.add_row(tool_name, tool_info['description'], tool_info.get('permissions', [])[0].value)
     
     console.print(table)
+    
+    # Display retry configuration
+    config_table = Table(title="⚙️ Retry Configuration")
+    config_table.add_column("Setting", style="cyan")
+    config_table.add_column("Value", style="green")
+    config_table.add_row("Max Retries", f"{scheduler.retry_config.max_retries}")
+    config_table.add_row("Base Delay", f"{scheduler.retry_config.base_delay}s")
+    config_table.add_row("Max Delay", f"{scheduler.retry_config.max_delay}s")
+    config_table.add_row("Exponential Base", f"{scheduler.retry_config.exponential_base}")
+    config_table.add_row("Jitter Factor", f"{scheduler.retry_config.jitter_factor}")
+    
+    console.print(config_table)
 
 
 if __name__ == "__main__":
