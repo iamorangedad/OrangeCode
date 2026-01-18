@@ -13,6 +13,7 @@ Implements:
 import os
 import sys
 import json
+import uuid
 import asyncio
 import select
 import signal
@@ -32,7 +33,7 @@ from rich.text import Text
 from rich import box
 from utils import read_file, write_file, list_files, execute_command
 from tools import get_all_tools, register_skill_permissions
-from retry import create_retry_aware_client, RetryConfig
+from retry import create_retry_aware_client, LLMRetryConfig
 
 
 class StreamingDisplayManager:
@@ -103,10 +104,12 @@ class StreamingDisplayManager:
             self.live_display.update(self.current_output)
 
 
-class AgentScheduler:
+class OrangeCodeScheduler:
     """Main scheduler with lazy loading and concurrency control"""
 
-def __init__(self, active_skills: List[str] = None):
+    def __init__(self, skill: str = "general", active_skills: List[str] = None):
+        if active_skills is None:
+            active_skills = [f"{skill}_assistant"]
         self.console = Console()
         self.client: Optional[ollama.Client] = None
         self.retry_client = None  # Enhanced client with retry mechanism
@@ -116,23 +119,37 @@ def __init__(self, active_skills: List[str] = None):
         self.display_manager = StreamingDisplayManager(self.console)
         self.is_cancelled = False
         self.keyboard_thread: Optional[threading.Thread] = None
-        
+
         # Lazy loading flag
         self._agent_initialized = False
-        
+
+        # Store skill for later use
+        self.skill_name = skill
+
         # Retry configuration
         self.retry_config = LLMRetryConfig(
             max_retries=3,
             base_delay=1.0,
             max_delay=30.0,
             exponential_base=2.0,
-            jitter_factor=0.1
+            jitter_factor=0.1,
         )
-        
+
         # Tool permission management
-        self.active_skills = active_skills or ["developer_assistant"]
+        self.active_skills = active_skills
         self.permission_guard = register_skill_permissions(self.active_skills)
+
+        # Create tool executor
+        self._tool_executor = None
         self.available_tools = self.permission_guard.get_restricted_tools()
+
+    def get_tool_executor(self):
+        """Get the tool executor instance"""
+        if self._tool_executor is None:
+            from tool_executor import ToolExecutor
+
+            self._tool_executor = ToolExecutor(self.retry_client)
+        return self._tool_executor
 
     def _ensure_agent_initialized(self):
         """Initialize agent on first use (lazy loading)"""
@@ -244,30 +261,31 @@ Note: Tools are filtered by active skill permissions.
         """Execute a tool with async support using LLM retry mechanism"""
         # Check tool permissions
         if not self.permission_guard.can_use_tool(tool):
-            error_msg = f"❌ 权限不足：当前技能 '{self.active_skills}' 不允许使用工具 '{tool}'"
+            error_msg = (
+                f"❌ 权限不足：当前技能 '{self.active_skills}' 不允许使用工具 '{tool}'"
+            )
             self.display_manager.add_tool_call(call_id, {"tool": tool, "args": args})
             self.display_manager.complete_tool_call(call_id, error_msg)
             return error_msg
-        
+
         # Use enhanced tool executor for complex operations
         from tool_executor import ToolExecutor
-        
+
         # Create enhanced tool executor with retry mechanism
         tool_executor = ToolExecutor(self.retry_client)
-        
+
         # For complex or risky operations, use LLM planning and validation
-        if tool_name in ["execute_shell"]:
+        if tool in ["execute_shell"]:
             return await tool_executor.execute_tool_with_llm_validation(
-                tool_name, tool_args, 
-                args.get("command", "")
+                tool, args, args.get("command", "")
             )
-        
+
         # For other operations, use LLM planning
-        elif tool_name in ["read_file", "write_file", "list_files"]:
+        elif tool in ["read_file", "write_file", "list_files"]:
             return await tool_executor.execute_tool_with_llm_planning(
-                tool_name, tool_args, user_query
+                tool, args, user_query
             )
-        
+
         # For simple operations, execute directly with retry
         else:
             return await tool_executor.execute_tool_with_retry(tool_name, args)
@@ -362,20 +380,70 @@ Note: Tools are filtered by active skill permissions.
 
 def main():
     """Main entry point for orangecode command"""
+    import argparse
+
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(
+        description="Orange Code - AI Coding Assistant with Tool Management"
+    )
+    parser.add_argument(
+        "--skills",
+        nargs="+",
+        help="Active skills (e.g., --skills file_manager developer_assistant)",
+    )
+    parser.add_argument(
+        "--list-tools", action="store_true", help="List all available tools"
+    )
+    parser.add_argument(
+        "--list-skills", action="store_true", help="List all available skills"
+    )
+
+    # 解析已知参数
+    known_args, remaining_args = parser.parse_known_args()
+
     try:
         # Display welcome banner
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.prompt import Prompt
+        from rich import box
+        from rich.table import Table
+        import asyncio
+
         console = Console()
+
+        # 处理特殊命令
+        if known_args.list_tools:
+            _list_all_tools(console)
+            return
+
+        if known_args.list_skills:
+            _list_all_skills(console)
+            return
+
+        # 设置活跃技能和重试配置
+        active_skills = known_args.skills or ["developer_assistant"]
+
+        # Initialize with retry mechanism
+        # These will be set when AgentScheduler is created
+
+        # 设置活跃技能
+        active_skills = known_args.skills or ["developer_assistant"]
+
         console.print(
             Panel(
-                "[bold cyan]🍊 Orange Code - AI Coding Assistant[/bold cyan]\n\n"
+                f"[bold cyan]🍊 Orange Code - AI Coding Assistant[/bold cyan]\n\n"
+                f"[yellow]Active Skills:[/yellow] [green]{', '.join(active_skills)}[/green]\n"
                 "[yellow]Commands:[/yellow]\n"
                 "• Type your coding questions directly\n"
                 "• [green]config[/green] - Show configuration\n"
+                "• [green]tools[/green] - List available tools\n"
                 "• [green]quit[/green]/[green]exit[/green] - Exit\n"
                 "• [green]ESC[/green] - Cancel current operation\n\n"
                 "[yellow]Example:[/yellow]\n"
                 "  orangecode> Write a Python function for fibonacci\n"
-                "  orangecode> Read main.py and add logging",
+                "  orangecode> Read main.py and add logging\n"
+                "  orangecode --skills file_manager --list-tools",
                 title="🤖 Welcome",
                 border_style="cyan",
                 box=box.ROUNDED,
@@ -383,7 +451,7 @@ def main():
         )
 
         # Interactive loop
-        scheduler = AgentScheduler()
+        scheduler = AgentScheduler(active_skills=active_skills)
 
         while True:
             try:
@@ -397,21 +465,38 @@ def main():
                     # Show configuration
                     scheduler._ensure_agent_initialized()
                     ollama_host = os.getenv("OLLAMA_HOST", "http://10.0.0.55:11434")
+                    available_tools = ", ".join(scheduler.available_tools)
+                    retry_stats = (
+                        scheduler.retry_client.get_stats()
+                        if hasattr(scheduler, "retry_client")
+                        else {}
+                    )
+                    # Format project context based on length
+                    project_context_display = (
+                        f"Project Context: [green]{scheduler.project_context[:100]}...[/green]\n"
+                        if len(scheduler.project_context) > 100
+                        else f"Project Context: [green]{scheduler.project_context}[/green]\n"
+                    )
+
                     console.print(
                         Panel(
-                            (
-                                f"[bold cyan]🍊 Orange Code Configuration[/bold cyan]\n\n"
-                                f"Ollama Host: [green]{ollama_host}[/green]\n"
-                                f"Model: [green]qwen2.5-coder:3b[/green]\n"
-                                f"Project Context: [green]{scheduler.project_context[:100]}...[/green]"
-                                if len(scheduler.project_context) > 100
-                                else f"Project Context: [green]{scheduler.project_context}[/green]"
-                            ),
+                            f"[bold cyan]🍊 Orange Code Configuration[/bold cyan]\n\n"
+                            f"Ollama Host: [green]{ollama_host}[/green]\n"
+                            f"Model: [green]qwen2.5-coder:3b[/green]\n"
+                            f"Active Skills: [green]{', '.join(scheduler.active_skills)}[/green]\n"
+                            f"Available Tools: [green]{available_tools}[/green]\n"
+                            f"{project_context_display}"
+                            f"[yellow]Retry Stats:[/yellow] Total: {retry_stats.get('total_calls', 0)}, Success: {retry_stats.get('successful_calls', 0)}[/green]",
                             title="⚙️ Config",
                             border_style="cyan",
                             box=box.ROUNDED,
                         )
                     )
+                    continue
+
+                if user_input.lower() == "tools":
+                    # Show available tools
+                    _show_available_tools(console, scheduler)
                     continue
 
                 if user_input.strip():
@@ -427,225 +512,95 @@ def main():
                 console.print("[bold green]👋 Goodbye![/bold green]")
                 break
 
+    except Exception as e:
+        print(f"Error starting Orange Code: {e}")
+        sys.exit(1)
     finally:
         if "scheduler" in locals():
             scheduler.cleanup()
 
 
-def main():
-    """Main entry point for orangecode command"""
-    import argparse
-    
-    # 解析命令行参数
-    parser = argparse.ArgumentParser(description="Orange Code - AI Coding Assistant with Tool Management")
-    parser.add_argument("--skills", nargs="+", help="Active skills (e.g., --skills file_manager developer_assistant)")
-    parser.add_argument("--list-tools", action="store_true", help="List all available tools")
-    parser.add_argument("--list-skills", action="store_true", help="List all available skills")
-    
-    # 解析已知参数
-    known_args, remaining_args = parser.parse_known_args()
-    
-    try:
-        # Display welcome banner
-        from rich.console import Console
-        from rich.panel import Panel
-        from rich.prompt import Prompt
-        from rich import box
-        from rich.table import Table
-        import asyncio
-        
-        console = Console()
-        
-        # 处理特殊命令
-        if known_args.list_tools:
-            _list_all_tools(console)
-            return
-            
-        if known_args.list_skills:
-            _list_all_skills(console)
-            return
-            
-        # 设置活跃技能和重试配置
-        active_skills = known_args.skills or ["developer_assistant"]
-        
-        # 重新初始化 AgentScheduler 以使用重试机制
-        self.active_skills = active_skills or ["developer_assistant"]
-        self.permission_guard = register_skill_permissions(self.active_skills)
-        self.available_tools = self.permission_guard.get_restricted_tools()
-        
-        # 如果没有指定技能，使用默认的 developer助手
-        if not known_args.skills:
-            active_skills = ["developer_assistant"]
-        
-        console.print(
-            Panel(
-                f"[bold cyan]🍊 Orange Code - AI Coding Assistant[/bold cyan]\n\n"
-                f"[yellow]Active Skills:[/yellow] [green]{', '.join(active_skills)}[/green]\n"
-                f"[yellow]Commands:[/yellow]\n"
-                "• Type your coding questions directly\n"
-                "• [green]config[/green] - Show configuration\n" 
-                "• [green]tools[/green] - List available tools\n"
-                "• [green]quit[/green]/[green]exit[/green] - Exit\n"
-                "• [green]ESC[/green] - Cancel current operation\n\n"
-                "[yellow]Example:[/yellow]\n"
-                "  orangecode> Write a Python function for fibonacci\n"
-                "  orangecode> Read main.py and add logging\n"
-                "  orangecode --skills file_manager --list-tools",
-                title="🤖 Welcome",
-                border_style="cyan",
-                box=box.ROUNDED,
-            )
-        )
-        
-        # 设置活跃技能
-        active_skills = known_args.skills or ["developer_assistant"]
-        
-        console.print(
-            Panel(
-                f"[bold cyan]🍊 Orange Code - AI Coding Assistant[/bold cyan]\n\n"
-                f"[yellow]Active Skills:[/yellow] [green]{', '.join(active_skills)}[/green]\n"
-                "[yellow]Commands:[/yellow]\n"
-                "• Type your coding questions directly\n"
-                "• [green]config[/green] - Show configuration\n" 
-                "• [green]tools[/green] - List available tools\n"
-                "• [green]quit[/green]/[green]exit[/green] - Exit\n"
-                "• [green]ESC[/green] - Cancel current operation\n\n"
-                "[yellow]Example:[/yellow]\n"
-                "  orangecode> Write a Python function for fibonacci\n"
-                "  orangecode> Read main.py and add logging\n"
-                "  orangecode --skills file_manager --list-tools",
-                title="🤖 Welcome",
-                border_style="cyan",
-                box=box.ROUNDED,
-            )
-        )
-        
-        # Interactive loop
-        scheduler = AgentScheduler(active_skills=active_skills)
-        
-        while True:
-            try:
-                user_input = Prompt.ask("\n[bold green]orangecode[/bold green]")
-                
-                if user_input.lower() in ["quit", "exit"]:
-                    console.print("[bold green]👋 Goodbye![/bold green]")
-                    break
-                    
-                if user_input.lower() == "config":
-                    # Show configuration
-                    scheduler._ensure_agent_initialized()
-                    ollama_host = os.getenv("OLLAMA_HOST", "http://10.0.0.55:11434")
-                    available_tools = ', '.join(scheduler.available_tools)
-                    retry_stats = scheduler.retry_client.get_stats() if hasattr(scheduler, 'retry_client') else {}
-                    console.print(
-                        Panel(
-                            f"[bold cyan]🍊 Orange Code Configuration[/bold cyan]\n\n"
-                            f"Ollama Host: [green]{ollama_host}[/green]\n"
-                            f"Model: [green]qwen2.5-coder:3b[/green]\n"
-                            f"Active Skills: [green]{', '.join(scheduler.active_skills)}[/green]\n"
-                            f"Available Tools: [green]{available_tools}[/green]\n"
-                            f"Project Context: [green]{scheduler.project_context[:100]}...[/green]" if len(scheduler.project_context) > 100 else f"Project Context: [green]{scheduler.project_context}[/green]\n"
-                            f"[yellow]Retry Stats:[/yellow] Total: {retry_stats.get('total_calls', 0)}, Success: {retry_stats.get('successful_calls', 0)}[/green]"
-                            title="⚙️ Config",
-                            border_style="cyan",
-                            box=box.ROUNDED,
-                        )
-                    )
-                    continue
-                    
-                if user_input.lower() == "tools":
-                    # Show available tools
-                    _show_available_tools(console, scheduler)
-                    continue
-                    
-                if user_input.strip():
-                    # Process the user's query
-                    asyncio.run(scheduler.process_message(user_input))
-                    
-            except KeyboardInterrupt:
-                console.print("\n[yellow]Use [bold]orangecode quit[/bold] to exit[/yellow]")
-                continue
-            except EOFError:
-                console.print("[bold green]👋 Goodbye![/bold green]")
-                break
-                
-    finally:
-        if 'scheduler' in locals():
-            scheduler.cleanup()
-    except Exception as e:
-        print(f"Error starting Orange Code: {e}")
-        sys.exit(1)
-
-
 def _list_all_tools(console: Console):
     """列出所有注册的工具"""
     from rich.table import Table
+
     tools = get_all_tools()
-    
+
     table = Table(title="🛠️ All Registered Tools")
     table.add_column("Tool Name", style="cyan")
     table.add_column("Description", style="green")
     table.add_column("Permissions", style="yellow")
     table.add_column("Skills", style="magenta")
-    
+
     for tool_name, tool_info in tools.items():
-        permissions = ', '.join([p.value for p in tool_info['permissions']])
-        skills = ', '.join([s.value for s in tool_info['skill_types']])
-        table.add_row(tool_name, tool_info['description'], permissions, skills)
-    
+        permissions = ", ".join([p.value for p in tool_info["permissions"]])
+        skills = ", ".join([s.value for s in tool_info["skill_types"]])
+        table.add_row(tool_name, tool_info["description"], permissions, skills)
+
     console.print(table)
 
 
 def _list_all_skills(console: Console):
     """列出所有可用的技能"""
     from rich.table import Table
-    
+
     table = Table(title="🎯 Available Skills")
     table.add_column("Skill Name", style="cyan")
     table.add_column("Description", style="green")
     table.add_column("Default Permissions", style="yellow")
-    
+
     skills = {
         "file_manager": "File management operations (read, write, list)",
         "code_analyzer": "Code analysis and inspection (read-only)",
         "system_info": "System information gathering",
-        "developer_assistant": "Full development assistant with all capabilities"
+        "developer_assistant": "Full development assistant with all capabilities",
     }
-    
+
     for skill, desc in skills.items():
         table.add_row(skill, desc, "Varies by skill type")
-    
+
     console.print(table)
 
 
 def _show_available_tools(console: Console, scheduler):
     """显示当前可用的工具和重试统计"""
     from rich.table import Table
-    
-    table = Table(title=f"🛠️ Available Tools (Skills: {', '.join(scheduler.active_skills)})")
-    table.add_column("Tool Name", style="cyan")
-    table.add_column("Description", style="green")
-    table.add_column("Type", style="blue")
-    
-    # Get retry statistics
-    retry_stats = scheduler.retry_client.get_stats() if hasattr(scheduler, 'retry_client') else {}
-    
-    table = Table(title=f"📊 Retry Statistics")
-    table.add_column("Metric", style="cyan")
-    table.add_column("Value", style="green")
-    table.add_row("Total Calls", f"{retry_stats.get('total_calls', 0)}")
-    table.add_row("Success Rate", f"{retry_stats.get('successful_calls', 0) if retry_stats.get('total_calls', 0) else 0:.1%}")
-    table.add_row("Failed Calls", f"{retry_stats.get('failed_calls', 0)}")
-    
-    if retry_stats['total_calls'] > 0:
-        table.add_row("Success Rate", f"{retry_stats.get('successful_calls', 0) if retry_stats.get('total_calls', 0) else 0:.1%}")
-    
+
+    # Tools table
+    tools_table = Table(
+        title=f"🛠️ Available Tools (Skills: {', '.join(scheduler.active_skills)})"
+    )
+    tools_table.add_column("Tool Name", style="cyan")
+    tools_table.add_column("Description", style="green")
+    tools_table.add_column("Type", style="blue")
+
     for tool_name in scheduler.available_tools:
         tool_info = get_all_tools()[tool_name]
-        table.add_row(tool_name, tool_info['description'], tool_info.get('permissions', [])[0].value)
-    
-    console.print(table)
-    
+        tools_table.add_row(
+            tool_name,
+            tool_info["description"],
+            tool_info.get("permissions", [])[0].value,
+        )
+
+    console.print(tools_table)
+
+    # Retry statistics table
+    retry_stats = (
+        scheduler.retry_client.get_stats() if hasattr(scheduler, "retry_client") else {}
+    )
+
+    retry_table = Table(title=f"📊 Retry Statistics")
+    retry_table.add_column("Metric", style="cyan")
+    retry_table.add_column("Value", style="green")
+    retry_table.add_row("Total Calls", f"{retry_stats.get('total_calls', 0)}")
+    retry_table.add_row(
+        "Success Rate",
+        f"{retry_stats.get('successful_calls', 0) if retry_stats.get('total_calls', 0) else 0:.1%}",
+    )
+    retry_table.add_row("Failed Calls", f"{retry_stats.get('failed_calls', 0)}")
+
+    console.print(retry_table)
+
     # Display retry configuration
     config_table = Table(title="⚙️ Retry Configuration")
     config_table.add_column("Setting", style="cyan")
@@ -653,9 +608,11 @@ def _show_available_tools(console: Console, scheduler):
     config_table.add_row("Max Retries", f"{scheduler.retry_config.max_retries}")
     config_table.add_row("Base Delay", f"{scheduler.retry_config.base_delay}s")
     config_table.add_row("Max Delay", f"{scheduler.retry_config.max_delay}s")
-    config_table.add_row("Exponential Base", f"{scheduler.retry_config.exponential_base}")
+    config_table.add_row(
+        "Exponential Base", f"{scheduler.retry_config.exponential_base}"
+    )
     config_table.add_row("Jitter Factor", f"{scheduler.retry_config.jitter_factor}")
-    
+
     console.print(config_table)
 
 

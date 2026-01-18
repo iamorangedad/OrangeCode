@@ -21,13 +21,14 @@ class PermissionLevel(Enum):
 
 
 class SkillRestriction(Enum):
-    """Skill restriction枚举"""
+    """Skill restriction enumeration"""
 
-    FILE_MANAGER = "file_manager"  # 文件管理技能
-    CODE_ANALYZER = "code_analyzer"  # 代码分析技能
-    SYSTEM_INFO = "system_info"  # 系统信息技能
-    DEVELOPER_ASSISTANT = "developer_assistant"  # 开发助手技能
-    ALL_SKILLS = "all"  # 所有技能
+    FILE_MANAGER = "file_manager"  # File management skills
+    CODE_ANALYZER = "code_analyzer"  # Code analysis skills
+    SYSTEM_INFO = "system_info"  # System information skills
+    DEVELOPER_ASSISTANT = "developer_assistant"  # Developer assistant skills
+    SYSTEM_ADMIN = "system_admin"  # System administration skills
+    ALL_SKILLS = "all"  # All skills
 
 
 # 全局Tool registration表
