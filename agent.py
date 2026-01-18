@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-No-RAG Agent with Scheduler functionality
+AI Agent with advanced functionality
 
 Implements:
 - Lazy loading with _ensure_agent_initialized()
@@ -31,8 +31,8 @@ from rich.live import Live
 from rich.text import Text
 from rich import box
 from utils import read_file, write_file, list_files, execute_command
-from tools import get_all_tools, register_skill_permissions, SkillRestriction
-from llm_retry import create_retry_aware_client, LLMRetryConfig
+from tools import get_all_tools, register_skill_permissions
+from retry import create_retry_aware_client, RetryConfig
 
 
 class StreamingDisplayManager:
