@@ -9,10 +9,9 @@ if [ -f .env ]; then
     echo "🌍 Loaded environment from .env"
 fi
 
-echo "🚀 Starting Orange Code Agent..."
-echo "📍 Ollama Host: ${OLLAMA_HOST:-http://10.0.0.55:11434}"
-echo "💬 To quit: type 'quit' or 'exit'"
+echo "Starting Orange Code"
+echo "Base URL: ${BASE_URL:-${OLLAMA_HOST:-http://127.0.0.1:11434}}"
+echo "Model: ${MODEL:-${OLLAMA_MODEL:-qwen2.5-coder:3b}}"
 echo ""
 
-# Run the agent
-cd .. && uv run --script orangecode.py
+cd .. && python3 orangecode.py
