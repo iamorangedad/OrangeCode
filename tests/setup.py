@@ -40,7 +40,7 @@ PYTHONUNBUFFERED=1
     # Install dependencies
     print("\n📦 Installing dependencies with uv...")
     result = subprocess.run(
-        ["uv", "add", "ollama", "rich", "requests"], capture_output=True, text=True
+        ["uv", "add", "requests"], capture_output=True, text=True
     )
     if result.returncode == 0:
         print("✅ Dependencies installed successfully")
@@ -54,21 +54,16 @@ PYTHONUNBUFFERED=1
 def create_run_script():
     """Create a convenient run script"""
     run_script = """#!/bin/bash
-# Run script for no-RAG agent
+# Start Orange Code from the tests directory.
 
-# Load environment variables
 if [ -f .env ]; then
-    export $(cat .env | xargs)
-    echo "🌍 Loaded environment from .env"
+    set -a
+    source .env
+    set +a
 fi
 
-echo "🚀 Starting no-RAG Agent..."
-echo "📍 Ollama Host: ${OLLAMA_HOST:-http://localhost:11434}"
-echo "💬 To quit: type 'quit' or 'exit'"
-echo ""
-
-# Run the agent
-uv run python agent_no_rag.py
+echo "Starting Orange Code"
+cd .. && python3 orangecode.py
 """
 
     with open("run.sh", "w") as f:
@@ -88,7 +83,7 @@ def main():
         print("\n📝 Next steps:")
         print("1. Ensure Ollama is running at your specified host")
         print("2. Run the agent with: ./run.sh")
-        print("3. Or run manually: uv run python agent_no_rag.py")
+        print("3. Or run manually: python3 ../orangecode.py")
         print("\n🧪 Test the environment:")
         print("   uv run python test_environment.py")
     else:
