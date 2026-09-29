@@ -11,17 +11,19 @@ with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 # Read requirements
-with open("requirements_no_rag.txt", "r", encoding="utf-8") as fh:
+with open("requirements.txt", "r", encoding="utf-8") as fh:
     requirements = [
-        line.strip() for line in fh if line.strip() and not line.startswith("#")
+        line.strip()
+        for line in fh
+        if line.strip() and not line.startswith("#") and not line.startswith("pytest")
     ]
 
 setup(
     name="orange-code",
-    version="1.0.0",
+    version="0.2.0",
     author="Orange Code Team",
     author_email="team@orangecode.com",
-    description="An autonomous AI coding assistant with advanced scheduler functionality",
+    description="A minimal coding agent for local or remote OpenAI-compatible models",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/iamorangedad/OrangeCode",
