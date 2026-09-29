@@ -1,93 +1,58 @@
-# Orange Code - AI Coding Assistant
+# Orange Code
 
-A production-ready autonomous coding assistant with advanced scheduler functionality and tool management system.
+A minimal coding agent. It reads and edits files, runs shell commands, and can call tools from one MCP server. The model can be a local Ollama instance or any OpenAI-compatible endpoint.
 
-## 🚀 Quick Start
+## Run
 
 ```bash
-# Install dependencies
-pip install ollama rich requests pydantic
+pip install -r requirements.txt
 
-# Start Orange Code
+export BASE_URL="http://127.0.0.1:11434"
+export MODEL="qwen2.5-coder:3b"
 python3 orangecode.py
-
-# Or use test environment
-cd tests && ./run.sh
 ```
 
-## 🎯 Key Features
-
-### Advanced Scheduler Architecture
-- **Lazy Loading**: Fast CLI startup with deferred initialization
-- **Concurrency Control**: Prevents API overload with semaphore limits
-- **Streaming Display**: Real-time output with tool call synchronization
-- **Project Context**: Automatic loading of project configuration
-
-### Tool Management System
-- **5 Core Tools**: File operations, shell commands, code analysis
-- **Permission Levels**: 4 granular access control levels
-- **Skill-Based Access**: Role-based tool filtering
-
-### LLM Integration
-- **Ollama Support**: Local LLM integration with qwen2.5-coder:3b
-- **Retry Mechanism**: Intelligent error handling with exponential backoff
-- **Rate Limiting**: Built-in request throttling
-
-## 📋 Available Skills
-
-Choose your expertise level:
-
-1. **Developer** - Coding and development tasks
-2. **Analyst** - Code analysis and review
-3. **System** - System administration
-4. **General** - General assistance
-
-## 🛠️ Available Tools
-
-- `read_file` - Read file contents
-- `write_file` - Write content to files
-- `execute_shell` - Execute shell commands
-- `list_files` - List directory contents
-- `safe_file_operations` - Secure file operations
-
-## 🔧 Configuration
-
-Set environment variables:
+`BASE_URL` may be an Ollama host (`http://127.0.0.1:11434`) or a full `/v1` base URL. `OLLAMA_HOST` is still accepted when `BASE_URL` is unset. Set `API_KEY` or `OPENAI_API_KEY` for endpoints that require a bearer token.
 
 ```bash
-export OLLAMA_HOST="http://localhost:11434"
-export OLLAMA_MODEL="qwen2.5-coder:3b"
+python3 orangecode.py --config
+python3 orangecode.py "Add a docstring to tools.py"
 ```
 
-## 📁 Project Structure
+Interactive commands are `config` and `quit`.
+
+## Tools
+
+- `read_file` reads a text file inside the workspace
+- `write_file` writes a text file inside the workspace
+- `list_files` lists workspace entries
+- `execute_shell` runs a command with the workspace as its working directory
+
+Set `CONFIRM_SHELL=1` to ask before each shell command. `MAX_STEPS` limits tool rounds (default 8).
+
+## MCP
+
+Set `MCP_COMMAND` to a stdio MCP server. Orange Code sends `initialize` and `tools/list` at startup, then `tools/call` when the model uses a tool. Server tools are exposed with an `mcp_` prefix.
+
+```bash
+export MCP_COMMAND="uvx mcp-server-filesystem /home/jetson/OrangeCode"
+python3 orangecode.py
+```
+
+If the server fails to start, the agent continues with the built-in tools.
+
+## Tests
+
+```bash
+python3 -m pytest
+```
+
+## Layout
 
 ```
-Orange Code/
-├── agent.py              # Main scheduler implementation
-├── orangecode.py         # CLI entry point
-├── tool_executor.py      # Tool execution engine
-├── tools.py              # Tool definitions and permissions
-├── retry.py             # LLM retry mechanism
-├── utils.py              # Shared utilities
-├── tests/                # Test environment
-├── AGENTS.md             # Project context (for AI)
-└── requirements.txt       # Python dependencies
+orangecode.py    CLI
+agent.py         tool-calling loop
+llm.py           OpenAI-compatible chat client
+tools.py         workspace tools
+mcp_client.py    stdio MCP client
 ```
-
-## 📚 Documentation
-
-- `AGENTS.md` - Project context for AI agent
-- `requirements.txt` - Python dependencies
-- This README provides all necessary usage information
-
-## 🤝 Contributing
-
-This is a production-ready AI coding assistant. Feel free to use and adapt for your needs.
-
-## 📄 License
-
-[Add your license here]
-
-## 🎊 Status
-
-✅ Production Ready - All core features implemented and tested
