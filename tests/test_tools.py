@@ -62,7 +62,58 @@ def test_unknown_tool(tmp_path: Path) -> None:
 def test_schemas_use_openai_function_shape(tmp_path: Path) -> None:
     registry = ToolRegistry(tmp_path)
     names = [item["function"]["name"] for item in registry.schemas()]
-    assert names == ["read_file", "write_file", "list_files", "execute_shell"]
+    assert names == ["read_file", "write_file", "edit_file", "search", "list_files", "execute_shell"]
+
+
+def test_read_file_line_range_includes_line_numbers(tmp_path: Path) -> None:
+    registry = ToolRegistry(tmp_path)
+    (tmp_path / "math_utils.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+    result = registry.execute("read_file", {"path": "math_utils.py", "start_line": 2, "end_line": 2})
+    assert "lines 2-2 of 2" in result
+    assert "2|    return a - b" in result
+    assert "def add" not in result
+
+
+def test_search_returns_path_and_line(tmp_path: Path) -> None:
+    registry = ToolRegistry(tmp_path)
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "math_utils.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "hidden.py").write_text("return a - b\n", encoding="utf-8")
+    result = registry.execute("search", {"query": "return a - b"})
+    assert "pkg/math_utils.py:2:     return a - b" in result
+    assert ".git" not in result
+
+
+def test_search_regex_and_no_match(tmp_path: Path) -> None:
+    registry = ToolRegistry(tmp_path)
+    (tmp_path / "app.py").write_text("value = 12\n", encoding="utf-8")
+    assert "app.py:1:" in registry.execute("search", {"query": r"value = \d+", "regex": True})
+    assert registry.execute("search", {"query": "missing"}) == "(no matches)"
+    assert "invalid regular expression" in registry.execute("search", {"query": "(", "regex": True})
+
+
+def test_edit_file_replaces_unique_snippet(tmp_path: Path) -> None:
+    registry = ToolRegistry(tmp_path)
+    (tmp_path / "math_utils.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+    result = registry.execute(
+        "edit_file",
+        {"path": "math_utils.py", "old_text": "return a - b", "new_text": "return a + b"},
+    )
+    assert "replaced lines 2-2 with lines 2-2" in result
+    assert "2|    return a + b" in result
+    assert (tmp_path / "math_utils.py").read_text(encoding="utf-8") == "def add(a, b):\n    return a + b\n"
+
+
+def test_edit_file_rejects_missing_and_repeated_text(tmp_path: Path) -> None:
+    registry = ToolRegistry(tmp_path)
+    (tmp_path / "app.py").write_text("x = 1\nx = 1\n", encoding="utf-8")
+    missing = registry.execute("edit_file", {"path": "app.py", "old_text": "absent", "new_text": "y"})
+    repeated = registry.execute("edit_file", {"path": "app.py", "old_text": "x = 1", "new_text": "x = 2"})
+    assert missing == "Error: old text not found"
+    assert "matched 2 times" in repeated
+    assert (tmp_path / "app.py").read_text(encoding="utf-8") == "x = 1\nx = 1\n"
 
 
 if __name__ == "__main__":
