@@ -23,8 +23,10 @@ Interactive commands are `config` and `quit`.
 
 ## Tools
 
-- `read_file` reads a text file inside the workspace
-- `write_file` writes a text file inside the workspace
+- `read_file` reads a text file, or a line range when `start_line` and `end_line` are set
+- `search` finds text or a per-line regular expression and returns `path:line`
+- `edit_file` replaces one unique snippet and reports the lines that changed
+- `write_file` creates or overwrites a whole file
 - `list_files` lists workspace entries
 - `execute_shell` runs a command with the workspace as its working directory
 
