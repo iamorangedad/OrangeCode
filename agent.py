@@ -111,6 +111,8 @@ def build_system_prompt(workspace: Path) -> str:
     """Describe the workspace and include a short project brief when present."""
     parts = [
         "You are a coding agent. Use tools to read and modify files in the workspace and to run shell commands.",
+        "Search before reading large files, then read only the line range you need.",
+        "Change existing files with edit_file and a unique snippet. Use write_file to create files.",
         "Prefer small, correct edits. When the task is done, reply in plain text without a tool call.",
         f"Workspace: {workspace}",
     ]
