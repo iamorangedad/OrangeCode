@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
 MAX_OUTPUT_CHARS = 20000
 MAX_LIST_ENTRIES = 200
+MAX_SEARCH_MATCHES = 50
+MAX_SEARCH_FILE_BYTES = 1_000_000
 SKIP_DIRS = {".git", "__pycache__", ".venv", "node_modules"}
 
 
@@ -39,18 +43,45 @@ class ToolRegistry:
         return [
             _schema(
                 "read_file",
-                "Read a UTF-8 text file inside the workspace.",
-                {"path": _string("File path inside the workspace.")},
+                "Read a UTF-8 text file inside the workspace. Pass start_line and end_line to read a slice with line numbers.",
+                {
+                    "path": _string("File path inside the workspace."),
+                    "start_line": _integer("First line to read, starting at 1. Omit to read from the beginning."),
+                    "end_line": _integer("Last line to read, inclusive. Omit to read through the end."),
+                },
                 ["path"],
             ),
             _schema(
                 "write_file",
-                "Create or overwrite a UTF-8 text file inside the workspace.",
+                "Create or overwrite a UTF-8 text file inside the workspace. Prefer edit_file when changing an existing file.",
                 {
                     "path": _string("File path inside the workspace."),
                     "content": _string("Full file contents to write."),
                 },
                 ["path", "content"],
+            ),
+            _schema(
+                "edit_file",
+                "Replace one unique text snippet in a file. Fails when the snippet is missing or appears more than once.",
+                {
+                    "path": _string("File path inside the workspace."),
+                    "old_text": _string("Exact snippet to replace. It must occur once in the file."),
+                    "new_text": _string("Replacement text. Use an empty string to delete the snippet."),
+                },
+                ["path", "old_text", "new_text"],
+            ),
+            _schema(
+                "search",
+                "Search text files in the workspace and return matching path, line number, and line text.",
+                {
+                    "query": _string("Text to find. Interpreted as a regular expression when regex is true."),
+                    "path": _string("File or directory to search. Defaults to the workspace root."),
+                    "regex": {
+                        "type": "boolean",
+                        "description": "When true, treat query as a Python regular expression matched per line.",
+                    },
+                },
+                ["query"],
             ),
             _schema(
                 "list_files",
@@ -80,16 +111,30 @@ class ToolRegistry:
 
     def names(self) -> list[str]:
         """Return built-in tool names."""
-        return ["read_file", "write_file", "list_files", "execute_shell"]
+        return ["read_file", "write_file", "edit_file", "search", "list_files", "execute_shell"]
 
     def execute(self, name: str, arguments: dict[str, Any] | None) -> str:
         """Run one built-in tool and return text for the model."""
         args = arguments or {}
         try:
             if name == "read_file":
-                return self.read_file(str(args.get("path", "")))
+                return self.read_file(
+                    str(args.get("path", "")),
+                    _optional_int(args.get("start_line")),
+                    _optional_int(args.get("end_line")),
+                )
             if name == "write_file":
                 return self.write_file(str(args.get("path", "")), str(args.get("content", "")))
+            if name == "edit_file":
+                if "old_text" not in args or "new_text" not in args:
+                    return "Error: old_text and new_text are required"
+                return self.edit_file(str(args.get("path", "")), str(args["old_text"]), str(args["new_text"]))
+            if name == "search":
+                return self.search(
+                    str(args.get("query", "")),
+                    str(args.get("path", ".") or "."),
+                    _optional_bool(args.get("regex"), False),
+                )
             if name == "list_files":
                 path = str(args.get("path", ".") or ".")
                 recursive = bool(args.get("recursive", False))
@@ -101,13 +146,100 @@ class ToolRegistry:
         except Exception as exc:
             return f"Error: {exc}"
 
-    def read_file(self, path: str) -> str:
-        """Read a text file inside the workspace."""
+    def read_file(self, path: str, start_line: int | None = None, end_line: int | None = None) -> str:
+        """Read a text file, or a 1-based inclusive line range with line numbers."""
         target = self._resolve(path)
         if not target.is_file():
             return f"Error: file not found: {path}"
         text = target.read_text(encoding="utf-8", errors="replace")
-        return limit_text(text)
+        if start_line is None and end_line is None:
+            return limit_text(text)
+
+        lines = text.splitlines()
+        start = 1 if start_line is None else start_line
+        end = len(lines) if end_line is None else end_line
+        if start < 1 or (end_line is not None and end < 1):
+            return "Error: line numbers start at 1"
+        if not lines or start > len(lines):
+            return f"Error: start_line {start} is past the end of the file ({len(lines)} lines)"
+        end = min(end, len(lines))
+        if end < start:
+            return "Error: end_line is before start_line"
+
+        numbered = [f"{index}|{lines[index - 1]}" for index in range(start, end + 1)]
+        relative = target.relative_to(self.workspace)
+        header = f"{relative} lines {start}-{end} of {len(lines)}"
+        return limit_text(header + "\n" + "\n".join(numbered))
+
+    def edit_file(self, path: str, old_text: str, new_text: str) -> str:
+        """Replace one unique snippet and report the line span that changed."""
+        if not path:
+            return "Error: path is required"
+        if old_text == "":
+            return "Error: old_text is required"
+        target = self._resolve(path)
+        if not target.is_file():
+            return f"Error: file not found: {path}"
+
+        original = target.read_text(encoding="utf-8", errors="replace")
+        matches = original.count(old_text)
+        if matches == 0:
+            return "Error: old text not found"
+        if matches > 1:
+            return f"Error: old text matched {matches} times; provide a larger unique snippet"
+
+        start = original.find(old_text)
+        old_span = _line_span(original, start, old_text)
+        updated = original.replace(old_text, new_text, 1)
+        target.write_text(updated, encoding="utf-8")
+        new_span = _line_span(updated, start, new_text) if new_text else old_span
+        relative = target.relative_to(self.workspace)
+        if new_text:
+            preview = _numbered_snippet(updated, new_span[0], new_span[1])
+            return (
+                f"Edited {relative}: replaced lines {old_span[0]}-{old_span[1]} "
+                f"with lines {new_span[0]}-{new_span[1]}.\n{preview}"
+            )
+        return f"Edited {relative}: deleted lines {old_span[0]}-{old_span[1]}."
+
+    def search(self, query: str, path: str = ".", regex: bool = False) -> str:
+        """Find lines inside workspace text files."""
+        if query == "":
+            return "Error: query is required"
+        pattern: re.Pattern[str] | None = None
+        if regex:
+            try:
+                pattern = re.compile(query)
+            except re.error as exc:
+                return f"Error: invalid regular expression: {exc}"
+
+        root = self._resolve(path or ".")
+        if not root.exists():
+            return f"Error: path not found: {path}"
+
+        matches: list[str] = []
+        for file_path in _iter_text_files(root):
+            resolved = file_path.resolve()
+            try:
+                resolved.relative_to(self.workspace)
+            except ValueError:
+                continue
+            text = _read_searchable(resolved)
+            if text is None:
+                continue
+            relative = resolved.relative_to(self.workspace)
+            for number, line in enumerate(text.splitlines(), start=1):
+                found = pattern.search(line) if pattern is not None else query in line
+                if not found:
+                    continue
+                matches.append(f"{relative}:{number}: {line}")
+                if len(matches) >= MAX_SEARCH_MATCHES:
+                    body = "\n".join(matches)
+                    return body + f"\n...[truncated at {MAX_SEARCH_MATCHES} matches]"
+
+        if not matches:
+            return "(no matches)"
+        return "\n".join(matches)
 
     def write_file(self, path: str, content: str) -> str:
         """Write a text file inside the workspace, creating parent directories."""
@@ -204,8 +336,74 @@ def _prompt_to_confirm(command: str) -> bool:
     return answer in {"y", "yes"}
 
 
+def _iter_text_files(root: Path):
+    """Yield files under root, skipping dependency and VCS directories."""
+    if root.is_file():
+        yield root
+        return
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [name for name in dirnames if name not in SKIP_DIRS]
+        for name in filenames:
+            yield Path(dirpath) / name
+
+
+def _read_searchable(path: Path) -> str | None:
+    """Return file text, or None for binary and oversized files."""
+    try:
+        if path.stat().st_size > MAX_SEARCH_FILE_BYTES:
+            return None
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if b"\0" in data:
+        return None
+    return data.decode("utf-8", errors="replace")
+
+
+def _line_span(text: str, start: int, snippet: str) -> tuple[int, int]:
+    """Return the 1-based inclusive line span of snippet at start."""
+    if snippet == "":
+        line = text.count("\n", 0, start) + 1
+        return line, line
+    start_line = text.count("\n", 0, start) + 1
+    end_line = start_line + snippet.count("\n")
+    if snippet.endswith("\n"):
+        end_line -= 1
+    return start_line, max(start_line, end_line)
+
+
+def _numbered_snippet(text: str, start_line: int, end_line: int) -> str:
+    lines = text.splitlines()
+    selected = [f"{index}|{lines[index - 1]}" for index in range(start_line, end_line + 1) if index <= len(lines)]
+    return "\n".join(selected)
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    return int(value)
+
+
+def _optional_bool(value: Any, default: bool) -> bool:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes"}:
+            return True
+        if lowered in {"0", "false", "no"}:
+            return False
+    return bool(value)
+
+
 def _string(description: str) -> dict[str, str]:
     return {"type": "string", "description": description}
+
+
+def _integer(description: str) -> dict[str, str]:
+    return {"type": "integer", "description": description}
 
 
 def _schema(
