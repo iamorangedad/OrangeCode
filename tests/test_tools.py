@@ -9,7 +9,7 @@ import pytest
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from tools import ToolRegistry
+from tools import ToolRegistry, resolve_shell_policy
 
 
 def test_read_and_write_round_trip(tmp_path: Path) -> None:
@@ -52,6 +52,37 @@ def test_unconfirmed_shell_does_not_run(tmp_path: Path) -> None:
     registry = ToolRegistry(tmp_path, confirm_shell=True, confirmer=lambda _command: False)
     result = registry.execute("execute_shell", {"command": "echo should-not-run"})
     assert result == "Error: command was not confirmed"
+
+
+def test_denied_shell_does_not_start(tmp_path: Path) -> None:
+    registry = ToolRegistry(tmp_path, shell_policy="deny")
+    result = registry.execute("execute_shell", {"command": "touch ran.txt"})
+    assert result.startswith("Error: shell is disabled")
+    assert not (tmp_path / "ran.txt").exists()
+
+
+def test_allowed_shell_runs(tmp_path: Path) -> None:
+    registry = ToolRegistry(tmp_path, shell_policy="allow")
+    result = registry.execute("execute_shell", {"command": "echo ok"})
+    assert "exit_code: 0" in result
+    assert "ok" in result
+
+
+def test_ask_without_terminal_does_not_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = ToolRegistry(tmp_path, shell_policy="ask")
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    result = registry.execute("execute_shell", {"command": "touch ran.txt"})
+    assert "SHELL=allow" in result
+    assert not (tmp_path / "ran.txt").exists()
+
+
+def test_resolve_shell_policy_prefers_explicit_value() -> None:
+    assert resolve_shell_policy(False, {}) == "deny"
+    assert resolve_shell_policy(True, {}) == "ask"
+    assert resolve_shell_policy(False, {"SHELL": "/bin/bash"}) == "deny"
+    assert resolve_shell_policy(True, {"SHELL": "allow"}) == "allow"
+    assert resolve_shell_policy(False, {"CONFIRM_SHELL": "0"}) == "allow"
+    assert resolve_shell_policy(True, {"SHELL": "deny", "CONFIRM_SHELL": "0"}) == "deny"
 
 
 def test_unknown_tool(tmp_path: Path) -> None:
