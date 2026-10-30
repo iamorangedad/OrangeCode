@@ -24,7 +24,7 @@ Orange Code is a minimal coding agent. It completes small coding tasks by callin
 orangecode.py   # CLI entry point
 agent.py        # Tool-calling loop
 llm.py          # OpenAI-compatible client
-tools.py        # read_file, write_file, list_files, execute_shell
+tools.py        # read_file, write_file, edit_file, search, list_files, execute_shell
 mcp_client.py   # stdio MCP client
 tests/          # pytest suite
 ```
@@ -34,8 +34,12 @@ tests/          # pytest suite
 - `MODEL` or `OLLAMA_MODEL`: model name. Default `qwen2.5-coder:3b`.
 - `API_KEY` or `OPENAI_API_KEY`: bearer token when the endpoint requires one.
 - `MCP_COMMAND`: optional stdio MCP server command.
+- `MCP_TIMEOUT`: seconds to wait for an MCP response. Default 30, maximum 120.
 - `MAX_STEPS`: tool-calling rounds. Default 8.
-- `CONFIRM_SHELL`: set to `1` to confirm shell commands.
+- `CHECK_COMMAND`: command run after a request writes files and the model stops. A non-zero exit is sent back into the loop. Empty means no check.
+- `SHELL`: `ask`, `allow`, or `deny`. Interactive sessions default to `ask`. One-shot runs default to `deny`. `orangecode.toml` can set `shell` when this variable is not one of those three words.
+- `TRACE`: set to `0` to hide tool start and end lines on stderr.
+- `CONFIRM_SHELL`: `1` means ask and `0` means allow, unless `SHELL` is exactly `ask`, `allow`, or `deny`.
 
 ## Tools
-Built-in tools stay inside the current working directory. MCP tools use the `mcp_` prefix and are listed beside the built-in tools.
+Built-in tools stay inside the current working directory. `read_file` without a line range refuses files longer than 400 lines. `read_file`, `write_file`, and `edit_file` refuse secret files and paths inside `.git` or `.orangecode`. `search` skips those paths. MCP tools use the `mcp_` prefix and are listed beside the built-in tools.

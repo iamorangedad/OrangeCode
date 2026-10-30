@@ -7,9 +7,12 @@ calls them. It does not implement an MCP server, resources, or prompts.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import subprocess
+import threading
+import time
 from typing import Any, BinaryIO
 
 
@@ -58,11 +61,31 @@ def read_message(stream: BinaryIO) -> dict[str, Any]:
     return payload
 
 
+def resolve_mcp_timeout(raw: str | None = None) -> float:
+    """Return the MCP read timeout in seconds, capped at 120.
+
+    An empty or invalid value falls back to 30 seconds. ``None`` reads
+    ``MCP_TIMEOUT`` from the environment.
+    """
+    if raw is None:
+        raw = os.getenv("MCP_TIMEOUT")
+    if raw is None or not str(raw).strip():
+        return 30.0
+    try:
+        value = float(raw)
+    except ValueError:
+        return 30.0
+    if value <= 0:
+        return 30.0
+    return min(value, 120.0)
+
+
 class MCPClient:
     """Stdio MCP client that exposes server tools with an mcp_ prefix."""
 
-    def __init__(self, command: str | list[str]) -> None:
+    def __init__(self, command: str | list[str], timeout: float | None = None) -> None:
         self.command = shlex.split(command) if isinstance(command, str) else list(command)
+        self.timeout = resolve_mcp_timeout() if timeout is None else resolve_mcp_timeout(str(timeout))
         self.process: subprocess.Popen[bytes] | None = None
         self._next_id = 0
         self._tools: dict[str, str] = {}
@@ -78,6 +101,7 @@ class MCPClient:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
+        self._drain_stderr()
         self._request(
             "initialize",
             {
@@ -153,8 +177,13 @@ class MCPClient:
         self._next_id += 1
         request_id = self._next_id
         self._write({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
+        deadline = time.monotonic() + self.timeout
         while True:
-            incoming = self._read()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self.close()
+                raise MCPError(f"MCP server timed out after {self.timeout:g} seconds")
+            incoming = self._read(remaining)
             if incoming.get("id") != request_id:
                 continue
             if "error" in incoming:
@@ -176,11 +205,50 @@ class MCPClient:
         process.stdin.write(encode_message(payload))
         process.stdin.flush()
 
-    def _read(self) -> dict[str, Any]:
+    def _read(self, timeout: float) -> dict[str, Any]:
         process = self._require_process()
-        if process.stdout is None:
+        stdout = process.stdout
+        if stdout is None:
             raise MCPError("MCP server stdout is not available")
-        return read_message(process.stdout)
+        outcome: dict[str, Any] = {}
+
+        def target() -> None:
+            try:
+                outcome["message"] = read_message(stdout)
+            except Exception as exc:
+                outcome["error"] = exc
+
+        worker = threading.Thread(target=target, daemon=True)
+        worker.start()
+        worker.join(timeout)
+        if worker.is_alive():
+            self.close()
+            raise MCPError(f"MCP server timed out after {self.timeout:g} seconds")
+        if "error" in outcome:
+            error = outcome["error"]
+            if isinstance(error, MCPError):
+                raise error
+            raise MCPError(str(error)) from error
+        message = outcome.get("message")
+        if not isinstance(message, dict):
+            raise MCPError("MCP message was not a JSON object")
+        return message
+
+    def _drain_stderr(self) -> None:
+        """Keep the stderr pipe from filling and stalling the server."""
+        process = self.process
+        if process is None or process.stderr is None:
+            return
+        stderr = process.stderr
+
+        def drain() -> None:
+            try:
+                while stderr.read(4096):
+                    continue
+            except (OSError, ValueError):
+                return
+
+        threading.Thread(target=drain, daemon=True).start()
 
     def _require_process(self) -> subprocess.Popen[bytes]:
         if self.process is None:

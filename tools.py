@@ -5,14 +5,19 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 MAX_OUTPUT_CHARS = 20000
 MAX_LIST_ENTRIES = 200
 MAX_SEARCH_MATCHES = 50
 MAX_SEARCH_FILE_BYTES = 1_000_000
-SKIP_DIRS = {".git", "__pycache__", ".venv", "node_modules"}
+MAX_FULL_READ_LINES = 400
+SKIP_DIRS = {".git", ".orangecode", "__pycache__", ".venv", "node_modules"}
+_SECRET_NAMES = {".env", ".netrc", "id_rsa", "id_dsa", "credentials.json"}
+_SECRET_SUFFIXES = {".pem", ".key", ".p12", ".pfx"}
+_DENIED_PARTS = {".git", ".orangecode"}
 
 
 def limit_text(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
@@ -32,11 +37,15 @@ class ToolRegistry:
         confirm_shell: bool = False,
         confirmer: Callable[[str], bool] | None = None,
         shell_timeout: int = 30,
+        shell_policy: str | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
-        self.confirm_shell = confirm_shell
+        self.shell_policy = _coerce_shell_policy(shell_policy, confirm_shell)
+        self.confirm_shell = self.shell_policy == "ask"
         self.confirmer = confirmer or _prompt_to_confirm
         self.shell_timeout = shell_timeout
+        self.written_paths: set[str] = set()
+        self.snapshotter: Callable[[Path, bool], None] | None = None
 
     def schemas(self) -> list[dict[str, Any]]:
         """Return OpenAI tool definitions for the built-in tools."""
@@ -149,13 +158,21 @@ class ToolRegistry:
     def read_file(self, path: str, start_line: int | None = None, end_line: int | None = None) -> str:
         """Read a text file, or a 1-based inclusive line range with line numbers."""
         target = self._resolve(path)
+        denied = self._unavailable(target, path)
+        if denied:
+            return denied
         if not target.is_file():
             return f"Error: file not found: {path}"
         text = target.read_text(encoding="utf-8", errors="replace")
+        lines = text.splitlines()
         if start_line is None and end_line is None:
+            if len(lines) > MAX_FULL_READ_LINES:
+                return (
+                    f"Error: {path} has {len(lines)} lines. "
+                    "Pass start_line and end_line, or search first."
+                )
             return limit_text(text)
 
-        lines = text.splitlines()
         start = 1 if start_line is None else start_line
         end = len(lines) if end_line is None else end_line
         if start < 1 or (end_line is not None and end < 1):
@@ -178,6 +195,9 @@ class ToolRegistry:
         if old_text == "":
             return "Error: old_text is required"
         target = self._resolve(path)
+        denied = self._unavailable(target, path)
+        if denied:
+            return denied
         if not target.is_file():
             return f"Error: file not found: {path}"
 
@@ -191,9 +211,11 @@ class ToolRegistry:
         start = original.find(old_text)
         old_span = _line_span(original, start, old_text)
         updated = original.replace(old_text, new_text, 1)
-        target.write_text(updated, encoding="utf-8")
+        self._record_snapshot(target, True)
+        _write_atomic(target, updated)
         new_span = _line_span(updated, start, new_text) if new_text else old_span
         relative = target.relative_to(self.workspace)
+        self.written_paths.add(str(relative))
         if new_text:
             preview = _numbered_snippet(updated, new_span[0], new_span[1])
             return (
@@ -221,13 +243,14 @@ class ToolRegistry:
         for file_path in _iter_text_files(root):
             resolved = file_path.resolve()
             try:
-                resolved.relative_to(self.workspace)
+                relative = resolved.relative_to(self.workspace)
             except ValueError:
+                continue
+            if path_is_denied(relative):
                 continue
             text = _read_searchable(resolved)
             if text is None:
                 continue
-            relative = resolved.relative_to(self.workspace)
             for number, line in enumerate(text.splitlines(), start=1):
                 found = pattern.search(line) if pattern is not None else query in line
                 if not found:
@@ -246,11 +269,14 @@ class ToolRegistry:
         if not path:
             return "Error: path is required"
         target = self._resolve(path)
-        parent = target.parent
-        if not parent.exists():
-            parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
-        return f"Wrote {target.relative_to(self.workspace)} ({len(content)} characters)"
+        denied = self._unavailable(target, path)
+        if denied:
+            return denied
+        self._record_snapshot(target, target.is_file())
+        _write_atomic(target, content)
+        relative = target.relative_to(self.workspace)
+        self.written_paths.add(str(relative))
+        return f"Wrote {relative} ({len(content)} characters)"
 
     def list_files(self, path: str = ".", recursive: bool = False) -> str:
         """List workspace entries, capped so the result stays small."""
@@ -289,8 +315,13 @@ class ToolRegistry:
         """Run a command in the workspace and return stdout, stderr, and the exit code."""
         if not command.strip():
             return "Error: command is required"
-        if self.confirm_shell and not self.confirmer(command):
-            return "Error: command was not confirmed"
+        if self.shell_policy == "deny":
+            return "Error: shell is disabled. Set SHELL=allow to run commands."
+        if self.shell_policy == "ask":
+            if self.confirmer is _prompt_to_confirm and not sys.stdin.isatty():
+                return "Error: shell needs a terminal or SHELL=allow"
+            if not self.confirmer(command):
+                return "Error: command was not confirmed"
 
         try:
             seconds = int(timeout) if timeout is not None else self.shell_timeout
@@ -329,6 +360,78 @@ class ToolRegistry:
         except ValueError as exc:
             raise ValueError(f"path is outside the workspace: {path}") from exc
         return resolved
+
+    def _record_snapshot(self, target: Path, existed: bool) -> None:
+        """Ask the active snapshotter to keep the pre-write bytes once."""
+        if self.snapshotter is None:
+            return
+        self.snapshotter(target.relative_to(self.workspace), existed)
+
+    def _unavailable(self, target: Path, display: str) -> str | None:
+        """Return an error when the resolved path is a secret or VCS path."""
+        relative = target.relative_to(self.workspace)
+        if path_is_denied(relative):
+            return f"Error: path is not available: {display}"
+        return None
+
+
+def resolve_shell_policy(
+    interactive: bool,
+    environ: Mapping[str, str] | None = None,
+    configured: str | None = None,
+) -> str:
+    """Pick ask, allow, or deny for this process.
+
+    ``SHELL`` wins when it is exactly ask, allow, or deny. A normal login
+    shell path such as ``/bin/bash`` is ignored. ``CONFIRM_SHELL=1`` means
+    ask and ``CONFIRM_SHELL=0`` means allow. A project-file value is used
+    only when those variables do not choose a policy. Otherwise interactive
+    sessions ask, and one-shot runs deny.
+    """
+    env = os.environ if environ is None else environ
+    chosen = env.get("SHELL", "").strip().lower()
+    if chosen in {"ask", "allow", "deny"}:
+        return chosen
+    confirm = env.get("CONFIRM_SHELL", "").strip().lower()
+    if confirm in {"1", "true", "yes"}:
+        return "ask"
+    if confirm in {"0", "false", "no"}:
+        return "allow"
+    if configured and configured.strip().lower() in {"ask", "allow", "deny"}:
+        return configured.strip().lower()
+    return "ask" if interactive else "deny"
+
+
+def _coerce_shell_policy(shell_policy: str | None, confirm_shell: bool) -> str:
+    if shell_policy is not None:
+        if shell_policy not in {"ask", "allow", "deny"}:
+            raise ValueError(f"unknown shell policy: {shell_policy}")
+        return shell_policy
+    return "ask" if confirm_shell else "allow"
+
+
+def path_is_denied(relative: Path) -> bool:
+    """Return True for secret files and for paths inside .git or .orangecode."""
+    if any(part in _DENIED_PARTS for part in relative.parts):
+        return True
+    name = relative.name
+    if name in _SECRET_NAMES or name.startswith(".env."):
+        return True
+    return relative.suffix.lower() in _SECRET_SUFFIXES
+
+
+def _write_atomic(target: Path, content: str) -> None:
+    """Replace a file by writing a sibling temp file and renaming it."""
+    parent = target.parent
+    if not parent.exists():
+        parent.mkdir(parents=True, exist_ok=True)
+    temporary = parent / f".{target.name}.{os.getpid()}.tmp"
+    try:
+        temporary.write_text(content, encoding="utf-8")
+        os.replace(temporary, target)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
 
 
 def _prompt_to_confirm(command: str) -> bool:

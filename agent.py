@@ -9,15 +9,20 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
+from config import load_project_config, prefer_env
 from llm import ChatResult, LLMClient, LLMError, ToolCall
 from mcp_client import MCPClient, MCPError
-from tools import ToolRegistry
+from session import new_session_path, save_session
+from snapshot import SnapshotStore, new_turn_id
+from tools import ToolRegistry, limit_text, resolve_shell_policy
 
 DEFAULT_MAX_STEPS = 8
+DEFAULT_MESSAGE_CHAR_BUDGET = 24000
 CONTEXT_CHAR_LIMIT = 6000
 
 
@@ -30,24 +35,54 @@ class Agent:
         registry: ToolRegistry,
         mcp: MCPClient | None = None,
         max_steps: int = DEFAULT_MAX_STEPS,
+        check_command: str = "",
+        message_char_budget: int = DEFAULT_MESSAGE_CHAR_BUDGET,
+        session_path: Path | None = None,
     ) -> None:
         self.llm = llm
         self.registry = registry
         self.mcp = mcp
         self.max_steps = max_steps
+        self.check_command = check_command.strip()
+        self.message_char_budget = message_char_budget
+        self.session_path = session_path
         self.messages: list[dict[str, Any]] = [
             {"role": "system", "content": build_system_prompt(registry.workspace)}
         ]
 
     @classmethod
-    def from_env(cls) -> Agent:
-        """Build an agent from environment variables and the current directory."""
-        confirm = os.getenv("CONFIRM_SHELL", "").strip().lower() in {"1", "true", "yes"}
-        registry = ToolRegistry(Path.cwd(), confirm_shell=confirm)
-        llm = LLMClient()
-        mcp = _start_mcp(os.getenv("MCP_COMMAND", ""))
-        max_steps = _positive_int(os.getenv("MAX_STEPS"), DEFAULT_MAX_STEPS)
-        return cls(llm=llm, registry=registry, mcp=mcp, max_steps=max_steps)
+    def from_env(cls, interactive: bool = True) -> Agent:
+        """Build an agent from environment variables and the current directory.
+
+        One-shot runs pass interactive=False so shell stays disabled unless
+        SHELL=allow is set.
+        """
+        workspace = Path.cwd()
+        file_config = load_project_config(workspace)
+        registry = ToolRegistry(
+            workspace,
+            shell_policy=resolve_shell_policy(interactive, configured=file_config.get("shell")),
+        )
+        llm = LLMClient(
+            base_url=prefer_env(os.getenv("BASE_URL") or os.getenv("OLLAMA_HOST"), file_config.get("base_url")),
+            model=prefer_env(os.getenv("MODEL") or os.getenv("OLLAMA_MODEL"), file_config.get("model")),
+        )
+        mcp = _start_mcp(prefer_env(os.getenv("MCP_COMMAND"), file_config.get("mcp_command")) or "")
+        max_steps = _positive_int(
+            prefer_env(os.getenv("MAX_STEPS"), file_config.get("max_steps")),
+            DEFAULT_MAX_STEPS,
+        )
+        check_command = prefer_env(os.getenv("CHECK_COMMAND"), file_config.get("check_command")) or ""
+        budget = _positive_int(os.getenv("MESSAGE_CHAR_BUDGET"), DEFAULT_MESSAGE_CHAR_BUDGET)
+        return cls(
+            llm=llm,
+            registry=registry,
+            mcp=mcp,
+            max_steps=max_steps,
+            check_command=check_command,
+            message_char_budget=budget,
+            session_path=new_session_path(Path.cwd()),
+        )
 
     def schemas(self) -> list[dict[str, Any]]:
         """Return built-in tools plus any tools discovered from MCP."""
@@ -65,12 +100,30 @@ class Agent:
 
     def run(self, user_text: str) -> str:
         """Append a user message and run the loop until a final answer."""
+        store = SnapshotStore(self.registry.workspace)
+        turn_id = new_turn_id()
+        self.registry.snapshotter = lambda relative, existed: store.record(turn_id, relative, existed)
+        try:
+            return self._run(user_text)
+        finally:
+            self.registry.snapshotter = None
+            self.persist_session()
+
+    def persist_session(self) -> None:
+        """Write the full transcript when this agent has a session path."""
+        if self.session_path is None:
+            return
+        save_session(self.session_path, self.messages)
+
+    def _run(self, user_text: str) -> str:
+        self.registry.written_paths.clear()
         self.messages.append({"role": "user", "content": user_text})
         schemas = self.schemas()
 
         for _ in range(self.max_steps):
             try:
-                result = self.llm.chat(self.messages, tools=schemas)
+                payload = trim_messages(self.messages, self.message_char_budget)
+                result = self.llm.chat(payload, tools=schemas)
             except LLMError as exc:
                 text = f"Error: {exc}"
                 self.messages.append({"role": "assistant", "content": text})
@@ -79,14 +132,33 @@ class Agent:
             if not result.tool_calls:
                 text = result.content or ""
                 self.messages.append({"role": "assistant", "content": text})
-                return text
+                failure = self._check_failure()
+                if failure is None:
+                    return text
+                self.messages.append({"role": "user", "content": failure})
+                continue
 
             self.messages.append(_assistant_message(result))
-            for call in result.tool_calls:
-                output = self.execute_tool(call)
-                self.messages.append(
-                    {"role": "tool", "tool_call_id": call.id, "content": output}
-                )
+            finished = 0
+            try:
+                for call in result.tool_calls:
+                    output = self.execute_tool(call)
+                    self.messages.append(
+                        {"role": "tool", "tool_call_id": call.id, "content": output}
+                    )
+                    finished += 1
+            except KeyboardInterrupt:
+                for call in result.tool_calls[finished:]:
+                    self.messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": call.id,
+                            "content": "Error: interrupted",
+                        }
+                    )
+                text = "Interrupted."
+                self.messages.append({"role": "assistant", "content": text})
+                return text
 
         text = f"Stopped: reached the maximum of {self.max_steps} tool steps."
         self.messages.append({"role": "assistant", "content": text})
@@ -96,9 +168,39 @@ class Agent:
         """Dispatch one tool call to MCP or the built-in registry."""
         if not call.name:
             return "Error: tool name is missing"
+        _trace_start(call)
         if self.mcp is not None and self.mcp.owns(call.name):
-            return self.mcp.call(call.name, call.arguments)
-        return self.registry.execute(call.name, call.arguments)
+            output = self.mcp.call(call.name, call.arguments)
+        else:
+            output = self.registry.execute(call.name, call.arguments)
+        _trace_end(call.name, output)
+        return output
+
+    def _check_failure(self) -> str | None:
+        """Run CHECK_COMMAND after writes. Return a user message when it fails."""
+        command = self.check_command
+        if not command or not self.registry.written_paths:
+            return None
+        try:
+            completed = subprocess.run(
+                command,
+                shell=True,
+                cwd=self.registry.workspace,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except subprocess.TimeoutExpired:
+            body = "exit_code: timeout\nError: check command timed out after 120 seconds"
+            return f"Check command `{command}` failed.\n{body}"
+        body = limit_text(
+            f"exit_code: {completed.returncode}\n"
+            f"stdout:\n{completed.stdout}\n"
+            f"stderr:\n{completed.stderr}"
+        )
+        if completed.returncode == 0:
+            return None
+        return f"Check command `{command}` failed.\n{body}"
 
     def close(self) -> None:
         """Release the MCP server process when one was started."""
@@ -164,6 +266,87 @@ def _start_mcp(command: str) -> MCPClient | None:
         client.close()
         return None
     return client
+
+
+def _trace_enabled() -> bool:
+    """Return False when TRACE is 0, false, or no. Tracing is on otherwise."""
+    return os.getenv("TRACE", "").strip().lower() not in {"0", "false", "no"}
+
+
+def _trace_start(call: ToolCall) -> None:
+    if not _trace_enabled():
+        return
+    detail = _trace_detail(call.arguments)
+    suffix = f" {detail}" if detail else ""
+    print(f"→ {call.name}{suffix}", file=sys.stderr)
+
+
+def _trace_end(name: str, output: str) -> None:
+    if not _trace_enabled():
+        return
+    status = "error" if output.startswith("Error:") else f"{len(output)} chars"
+    print(f"← {name} {status}", file=sys.stderr)
+
+
+def _trace_detail(arguments: dict[str, Any] | None) -> str:
+    if not arguments:
+        return ""
+    parts: list[str] = []
+    for key in ("path", "command", "query"):
+        value = arguments.get(key)
+        if value is None or value == "":
+            continue
+        text = str(value).replace("\n", " ")
+        if len(text) > 80:
+            text = text[:77] + "..."
+        parts.append(f"{key}={text}")
+    return " ".join(parts)
+
+
+def trim_messages(messages: list[dict[str, Any]], budget: int) -> list[dict[str, Any]]:
+    """Return a copy whose non-system text fits the character budget.
+
+    The stored transcript is left unchanged. The system message and the last
+    user message stay intact. Oldest tool results are replaced first.
+    """
+    copied = [dict(message) for message in messages]
+    last_user = None
+    for index, message in enumerate(copied):
+        if message.get("role") == "user":
+            last_user = index
+
+    def size() -> int:
+        return sum(_message_chars(message) for message in copied if message.get("role") != "system")
+
+    for index, message in enumerate(copied):
+        if size() <= budget:
+            return copied
+        if message.get("role") != "tool":
+            continue
+        content = message.get("content")
+        if not isinstance(content, str) or content.startswith("[trimmed]"):
+            continue
+        copied[index] = {**message, "content": f"[trimmed] tool result omitted ({len(content)} characters)"}
+
+    for index, message in enumerate(copied):
+        if size() <= budget:
+            return copied
+        if message.get("role") not in {"user", "assistant"} or index == last_user:
+            continue
+        content = message.get("content")
+        if not isinstance(content, str) or content.startswith("[trimmed]"):
+            continue
+        copied[index] = {**message, "content": f"[trimmed] message omitted ({len(content)} characters)"}
+    return copied
+
+
+def _message_chars(message: dict[str, Any]) -> int:
+    content = message.get("content")
+    total = len(content) if isinstance(content, str) else 0
+    tool_calls = message.get("tool_calls")
+    if tool_calls:
+        total += len(json.dumps(tool_calls))
+    return total
 
 
 def _positive_int(raw: str | None, default: int) -> int:
