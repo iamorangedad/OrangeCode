@@ -17,6 +17,7 @@ from typing import Any
 from llm import ChatResult, LLMClient, LLMError, ToolCall
 from mcp_client import MCPClient, MCPError
 from session import new_session_path, save_session
+from snapshot import SnapshotStore, new_turn_id
 from tools import ToolRegistry, limit_text, resolve_shell_policy
 
 DEFAULT_MAX_STEPS = 8
@@ -87,9 +88,13 @@ class Agent:
 
     def run(self, user_text: str) -> str:
         """Append a user message and run the loop until a final answer."""
+        store = SnapshotStore(self.registry.workspace)
+        turn_id = new_turn_id()
+        self.registry.snapshotter = lambda relative, existed: store.record(turn_id, relative, existed)
         try:
             return self._run(user_text)
         finally:
+            self.registry.snapshotter = None
             self.persist_session()
 
     def persist_session(self) -> None:
