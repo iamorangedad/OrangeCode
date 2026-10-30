@@ -10,6 +10,7 @@ import pytest
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from agent import Agent, build_system_prompt, trim_messages
+from session import load_session
 from llm import ChatResult, ToolCall
 from tools import ToolRegistry
 
@@ -149,6 +150,16 @@ def test_one_shot_from_env_denies_shell(tmp_path: Path, monkeypatch: pytest.Monk
         assert agent.registry.shell_policy == "deny"
     finally:
         agent.close()
+
+
+def test_saved_session_reloads_on_a_new_agent(tmp_path: Path) -> None:
+    path = tmp_path / ".orangecode" / "sessions" / "demo.jsonl"
+    llm = _ScriptedLLM([ChatResult(content="ok", tool_calls=[])])
+    agent = Agent(llm, ToolRegistry(tmp_path), session_path=path)
+    assert agent.run("remember this") == "ok"
+    restored = Agent(_ScriptedLLM([]), ToolRegistry(tmp_path))
+    restored.messages = load_session(path)
+    assert any(message.get("content") == "remember this" for message in restored.messages)
 
 
 def test_trim_messages_fits_the_budget_and_keeps_the_last_user() -> None:
