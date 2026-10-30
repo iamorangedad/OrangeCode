@@ -19,7 +19,11 @@ python3 orangecode.py --config
 python3 orangecode.py "Add a docstring to tools.py"
 ```
 
-Interactive commands are `config` and `quit`.
+Interactive commands are `config`, `resume`, and `quit`.
+
+Each request is appended to `.orangecode/sessions/<id>.jsonl`. That directory is gitignored. Continue a session with `python3 orangecode.py --resume <id>`, or type `resume` in the interactive prompt to load the newest one.
+
+`MESSAGE_CHAR_BUDGET` caps the non-system characters sent to the model (default 24000). The saved session keeps the full transcript.
 
 ## Tools
 
