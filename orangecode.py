@@ -16,7 +16,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", action="store_true", help="Print model and tool settings")
     args = parser.parse_args(argv)
 
-    agent = Agent.from_env()
+    agent = Agent.from_env(interactive=not args.query)
     try:
         if args.config:
             print_config(agent)
@@ -63,7 +63,7 @@ def print_config(agent: Agent) -> None:
     print(f"Base URL: {agent.llm.base_url}")
     print(f"Workspace: {agent.registry.workspace}")
     print(f"Max steps: {agent.max_steps}")
-    print(f"Confirm shell: {agent.registry.confirm_shell}")
+    print(f"Shell: {agent.registry.shell_policy}")
     print("Tools: " + ", ".join(agent.tool_names()))
 
 
