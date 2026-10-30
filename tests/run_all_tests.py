@@ -41,6 +41,7 @@ def main() -> int:
         (project_root / "tests" / "test_llm.py", "Chat client"),
         (project_root / "tests" / "test_agent.py", "Agent loop"),
         (project_root / "tests" / "test_mcp.py", "MCP client"),
+        (project_root / "tests" / "test_session.py", "Sessions"),
         (project_root / "tests" / "test_environment.py", "Environment"),
     ]
 
