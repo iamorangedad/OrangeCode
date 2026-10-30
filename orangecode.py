@@ -64,6 +64,7 @@ def print_config(agent: Agent) -> None:
     print(f"Workspace: {agent.registry.workspace}")
     print(f"Max steps: {agent.max_steps}")
     print(f"Shell: {agent.registry.shell_policy}")
+    print(f"Check: {agent.check_command or '(none)'}")
     print("Tools: " + ", ".join(agent.tool_names()))
 
 
