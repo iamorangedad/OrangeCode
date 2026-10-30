@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run script for no-RAG agent
+# Start Orange Code from the repository root.
 
 # Load environment variables (skip comments)
 if [ -f .env ]; then
