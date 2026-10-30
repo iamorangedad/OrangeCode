@@ -59,6 +59,63 @@ def test_model_error_is_returned_as_text(tmp_path: Path) -> None:
     assert agent.run("hello") == "Error: connection refused"
 
 
+_FAIL_CHECK = 'python3 -c "import sys; sys.exit(1)"'
+_PASS_CHECK = 'python3 -c "print(1)"'
+
+
+def _write_then_answer(final: str) -> list[ChatResult]:
+    return [
+        ChatResult(
+            content=None,
+            tool_calls=[
+                ToolCall(
+                    id="call_write",
+                    name="write_file",
+                    arguments={"path": "app.py", "content": "print(1)\n"},
+                )
+            ],
+        ),
+        ChatResult(content=final, tool_calls=[]),
+    ]
+
+
+def test_failed_check_is_sent_back_to_the_model(tmp_path: Path) -> None:
+    llm = _ScriptedLLM(
+        [
+            *_write_then_answer("done"),
+            ChatResult(content="fixed", tool_calls=[]),
+        ]
+    )
+    agent = Agent(llm, ToolRegistry(tmp_path), max_steps=3, check_command=_FAIL_CHECK)
+    answer = agent.run("add app.py")
+    assert answer.startswith("Stopped:")
+    assert len(llm.calls) == 3
+    assert any("exit_code: 1" in str(message.get("content")) for message in llm.calls[2])
+
+
+def test_passing_check_returns_the_model_text(tmp_path: Path) -> None:
+    llm = _ScriptedLLM(_write_then_answer("all good"))
+    agent = Agent(llm, ToolRegistry(tmp_path), max_steps=4, check_command=_PASS_CHECK)
+    assert agent.run("add app.py") == "all good"
+    assert len(llm.calls) == 2
+
+
+def test_missing_check_command_does_not_run(tmp_path: Path) -> None:
+    llm = _ScriptedLLM(_write_then_answer("all good"))
+    agent = Agent(llm, ToolRegistry(tmp_path), max_steps=4, check_command="")
+    assert agent.run("add app.py") == "all good"
+    assert len(llm.calls) == 2
+
+
+def test_new_request_clears_written_paths(tmp_path: Path) -> None:
+    registry = ToolRegistry(tmp_path)
+    registry.written_paths.add("stale.py")
+    llm = _ScriptedLLM([ChatResult(content="hello", tool_calls=[])])
+    agent = Agent(llm, registry, check_command=_FAIL_CHECK)
+    assert agent.run("hi") == "hello"
+    assert len(llm.calls) == 1
+
+
 def test_interrupt_fills_missing_tool_results(tmp_path: Path) -> None:
     class _InterruptRegistry(ToolRegistry):
         def execute(self, name: str, arguments: dict) -> str:
