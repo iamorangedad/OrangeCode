@@ -37,7 +37,8 @@ tests/          # pytest suite
 - `MCP_TIMEOUT`: seconds to wait for an MCP response. Default 30, maximum 120.
 - `MAX_STEPS`: tool-calling rounds. Default 8.
 - `CHECK_COMMAND`: command run after a request writes files and the model stops. A non-zero exit is sent back into the loop. Empty means no check.
-- `SHELL`: `ask`, `allow`, or `deny`. Interactive sessions default to `ask`. One-shot runs default to `deny`.
+- `SHELL`: `ask`, `allow`, or `deny`. Interactive sessions default to `ask`. One-shot runs default to `deny`. `orangecode.toml` can set `shell` when this variable is not one of those three words.
+- `TRACE`: set to `0` to hide tool start and end lines on stderr.
 - `CONFIRM_SHELL`: `1` means ask and `0` means allow, unless `SHELL` is exactly `ask`, `allow`, or `deny`.
 
 ## Tools
