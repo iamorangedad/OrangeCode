@@ -36,8 +36,9 @@ tests/          # pytest suite
 - `MCP_COMMAND`: optional stdio MCP server command.
 - `MCP_TIMEOUT`: seconds to wait for an MCP response. Default 30, maximum 120.
 - `MAX_STEPS`: tool-calling rounds. Default 8.
+- `CHECK_COMMAND`: command run after a request writes files and the model stops. A non-zero exit is sent back into the loop. Empty means no check.
 - `SHELL`: `ask`, `allow`, or `deny`. Interactive sessions default to `ask`. One-shot runs default to `deny`.
 - `CONFIRM_SHELL`: `1` means ask and `0` means allow, unless `SHELL` is exactly `ask`, `allow`, or `deny`.
 
 ## Tools
-Built-in tools stay inside the current working directory. `read_file`, `write_file`, and `edit_file` refuse secret files and paths inside `.git` or `.orangecode`. `search` skips those paths. MCP tools use the `mcp_` prefix and are listed beside the built-in tools.
+Built-in tools stay inside the current working directory. `read_file` without a line range refuses files longer than 400 lines. `read_file`, `write_file`, and `edit_file` refuse secret files and paths inside `.git` or `.orangecode`. `search` skips those paths. MCP tools use the `mcp_` prefix and are listed beside the built-in tools.
