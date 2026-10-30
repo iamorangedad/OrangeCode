@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
 from llm import ChatResult, LLMClient, LLMError, ToolCall
 from mcp_client import MCPClient, MCPError
-from tools import ToolRegistry, resolve_shell_policy
+from tools import ToolRegistry, limit_text, resolve_shell_policy
 
 DEFAULT_MAX_STEPS = 8
 CONTEXT_CHAR_LIMIT = 6000
@@ -30,11 +31,13 @@ class Agent:
         registry: ToolRegistry,
         mcp: MCPClient | None = None,
         max_steps: int = DEFAULT_MAX_STEPS,
+        check_command: str = "",
     ) -> None:
         self.llm = llm
         self.registry = registry
         self.mcp = mcp
         self.max_steps = max_steps
+        self.check_command = check_command.strip()
         self.messages: list[dict[str, Any]] = [
             {"role": "system", "content": build_system_prompt(registry.workspace)}
         ]
@@ -50,7 +53,14 @@ class Agent:
         llm = LLMClient()
         mcp = _start_mcp(os.getenv("MCP_COMMAND", ""))
         max_steps = _positive_int(os.getenv("MAX_STEPS"), DEFAULT_MAX_STEPS)
-        return cls(llm=llm, registry=registry, mcp=mcp, max_steps=max_steps)
+        check_command = os.getenv("CHECK_COMMAND", "")
+        return cls(
+            llm=llm,
+            registry=registry,
+            mcp=mcp,
+            max_steps=max_steps,
+            check_command=check_command,
+        )
 
     def schemas(self) -> list[dict[str, Any]]:
         """Return built-in tools plus any tools discovered from MCP."""
@@ -68,6 +78,7 @@ class Agent:
 
     def run(self, user_text: str) -> str:
         """Append a user message and run the loop until a final answer."""
+        self.registry.written_paths.clear()
         self.messages.append({"role": "user", "content": user_text})
         schemas = self.schemas()
 
@@ -82,7 +93,11 @@ class Agent:
             if not result.tool_calls:
                 text = result.content or ""
                 self.messages.append({"role": "assistant", "content": text})
-                return text
+                failure = self._check_failure()
+                if failure is None:
+                    return text
+                self.messages.append({"role": "user", "content": failure})
+                continue
 
             self.messages.append(_assistant_message(result))
             finished = 0
@@ -117,6 +132,32 @@ class Agent:
         if self.mcp is not None and self.mcp.owns(call.name):
             return self.mcp.call(call.name, call.arguments)
         return self.registry.execute(call.name, call.arguments)
+
+    def _check_failure(self) -> str | None:
+        """Run CHECK_COMMAND after writes. Return a user message when it fails."""
+        command = self.check_command
+        if not command or not self.registry.written_paths:
+            return None
+        try:
+            completed = subprocess.run(
+                command,
+                shell=True,
+                cwd=self.registry.workspace,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except subprocess.TimeoutExpired:
+            body = "exit_code: timeout\nError: check command timed out after 120 seconds"
+            return f"Check command `{command}` failed.\n{body}"
+        body = limit_text(
+            f"exit_code: {completed.returncode}\n"
+            f"stdout:\n{completed.stdout}\n"
+            f"stderr:\n{completed.stderr}"
+        )
+        if completed.returncode == 0:
+            return None
+        return f"Check command `{command}` failed.\n{body}"
 
     def close(self) -> None:
         """Release the MCP server process when one was started."""
