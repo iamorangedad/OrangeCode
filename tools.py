@@ -45,6 +45,7 @@ class ToolRegistry:
         self.confirmer = confirmer or _prompt_to_confirm
         self.shell_timeout = shell_timeout
         self.written_paths: set[str] = set()
+        self.snapshotter: Callable[[Path, bool], None] | None = None
 
     def schemas(self) -> list[dict[str, Any]]:
         """Return OpenAI tool definitions for the built-in tools."""
@@ -210,6 +211,7 @@ class ToolRegistry:
         start = original.find(old_text)
         old_span = _line_span(original, start, old_text)
         updated = original.replace(old_text, new_text, 1)
+        self._record_snapshot(target, True)
         _write_atomic(target, updated)
         new_span = _line_span(updated, start, new_text) if new_text else old_span
         relative = target.relative_to(self.workspace)
@@ -270,6 +272,7 @@ class ToolRegistry:
         denied = self._unavailable(target, path)
         if denied:
             return denied
+        self._record_snapshot(target, target.is_file())
         _write_atomic(target, content)
         relative = target.relative_to(self.workspace)
         self.written_paths.add(str(relative))
@@ -357,6 +360,12 @@ class ToolRegistry:
         except ValueError as exc:
             raise ValueError(f"path is outside the workspace: {path}") from exc
         return resolved
+
+    def _record_snapshot(self, target: Path, existed: bool) -> None:
+        """Ask the active snapshotter to keep the pre-write bytes once."""
+        if self.snapshotter is None:
+            return
+        self.snapshotter(target.relative_to(self.workspace), existed)
 
     def _unavailable(self, target: Path, display: str) -> str | None:
         """Return an error when the resolved path is a secret or VCS path."""
