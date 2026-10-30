@@ -9,7 +9,7 @@ import pytest
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from agent import Agent, build_system_prompt
+from agent import Agent, build_system_prompt, trim_messages
 from llm import ChatResult, ToolCall
 from tools import ToolRegistry
 
@@ -149,6 +149,29 @@ def test_one_shot_from_env_denies_shell(tmp_path: Path, monkeypatch: pytest.Monk
         assert agent.registry.shell_policy == "deny"
     finally:
         agent.close()
+
+
+def test_trim_messages_fits_the_budget_and_keeps_the_last_user() -> None:
+    original = [
+        {"role": "system", "content": "instructions"},
+        {"role": "user", "content": "older"},
+        {"role": "assistant", "content": "A" * 80},
+        {"role": "tool", "tool_call_id": "call_1", "content": "B" * 120},
+        {"role": "user", "content": "latest question"},
+    ]
+    trimmed = trim_messages(original, 160)
+    non_system = sum(
+        len(message.get("content") or "")
+        for message in trimmed
+        if message["role"] != "system"
+    )
+    assert non_system <= 160
+    assert trimmed[0]["content"] == "instructions"
+    assert trimmed[-1]["content"] == "latest question"
+    assert original[3]["content"] == "B" * 120
+    tool = next(message for message in trimmed if message["role"] == "tool")
+    assert tool["role"] == "tool"
+    assert "120 characters" in tool["content"]
 
 
 def test_system_prompt_includes_agents_md(tmp_path: Path) -> None:
