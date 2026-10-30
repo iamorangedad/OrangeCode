@@ -19,11 +19,30 @@ python3 orangecode.py --config
 python3 orangecode.py "Add a docstring to tools.py"
 ```
 
-Interactive commands are `config`, `resume`, and `quit`.
+Interactive commands are `config`, `resume`, `undo`, and `quit`.
 
-Each request is appended to `.orangecode/sessions/<id>.jsonl`. That directory is gitignored. Continue a session with `python3 orangecode.py --resume <id>`, or type `resume` in the interactive prompt to load the newest one.
+`python3 orangecode.py --undo` restores files from the newest request snapshot under `.orangecode/snapshots/`. The interactive `undo` command does the same. Undo copies the saved bytes back and deletes files that request created. It does not create a git commit.
+
+Tool calls are printed to stderr. Set `TRACE=0` to hide them. The final answer stays on stdout.
+
+Each request is appended to `.orangecode/sessions/<id>.jsonl`. That directory is gitignored, along with snapshots. Continue a session with `python3 orangecode.py --resume <id>`, or type `resume` in the interactive prompt to load the newest one.
 
 `MESSAGE_CHAR_BUDGET` caps the non-system characters sent to the model (default 24000). The saved session keeps the full transcript.
+
+## Project file
+
+A workspace may contain `orangecode.toml`. See `orangecode.toml.example`. Supported fields are `model`, `base_url`, `max_steps`, `check_command`, `shell`, and `mcp_command`. The matching environment variable overrides the file. `API_KEY` is read only from the environment.
+
+```toml
+model = "qwen2.5-coder:3b"
+base_url = "http://127.0.0.1:11434"
+max_steps = 8
+check_command = "python3 -m pytest"
+shell = "ask"
+mcp_command = ""
+```
+
+With that file, `python3 orangecode.py --config` prints `model` from the file. `MODEL=other python3 orangecode.py --config` prints `other`.
 
 ## Tools
 
