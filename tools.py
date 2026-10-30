@@ -5,8 +5,9 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 MAX_OUTPUT_CHARS = 20000
 MAX_LIST_ENTRIES = 200
@@ -35,9 +36,11 @@ class ToolRegistry:
         confirm_shell: bool = False,
         confirmer: Callable[[str], bool] | None = None,
         shell_timeout: int = 30,
+        shell_policy: str | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
-        self.confirm_shell = confirm_shell
+        self.shell_policy = _coerce_shell_policy(shell_policy, confirm_shell)
+        self.confirm_shell = self.shell_policy == "ask"
         self.confirmer = confirmer or _prompt_to_confirm
         self.shell_timeout = shell_timeout
 
@@ -302,8 +305,13 @@ class ToolRegistry:
         """Run a command in the workspace and return stdout, stderr, and the exit code."""
         if not command.strip():
             return "Error: command is required"
-        if self.confirm_shell and not self.confirmer(command):
-            return "Error: command was not confirmed"
+        if self.shell_policy == "deny":
+            return "Error: shell is disabled. Set SHELL=allow to run commands."
+        if self.shell_policy == "ask":
+            if self.confirmer is _prompt_to_confirm and not sys.stdin.isatty():
+                return "Error: shell needs a terminal or SHELL=allow"
+            if not self.confirmer(command):
+                return "Error: command was not confirmed"
 
         try:
             seconds = int(timeout) if timeout is not None else self.shell_timeout
@@ -349,6 +357,34 @@ class ToolRegistry:
         if path_is_denied(relative):
             return f"Error: path is not available: {display}"
         return None
+
+
+def resolve_shell_policy(interactive: bool, environ: Mapping[str, str] | None = None) -> str:
+    """Pick ask, allow, or deny for this process.
+
+    ``SHELL`` wins when it is exactly ask, allow, or deny. A normal login
+    shell path such as ``/bin/bash`` is ignored. ``CONFIRM_SHELL=1`` means
+    ask and ``CONFIRM_SHELL=0`` means allow. Otherwise interactive sessions
+    ask, and one-shot runs deny.
+    """
+    env = os.environ if environ is None else environ
+    chosen = env.get("SHELL", "").strip().lower()
+    if chosen in {"ask", "allow", "deny"}:
+        return chosen
+    confirm = env.get("CONFIRM_SHELL", "").strip().lower()
+    if confirm in {"1", "true", "yes"}:
+        return "ask"
+    if confirm in {"0", "false", "no"}:
+        return "allow"
+    return "ask" if interactive else "deny"
+
+
+def _coerce_shell_policy(shell_policy: str | None, confirm_shell: bool) -> str:
+    if shell_policy is not None:
+        if shell_policy not in {"ask", "allow", "deny"}:
+            raise ValueError(f"unknown shell policy: {shell_policy}")
+        return shell_policy
+    return "ask" if confirm_shell else "allow"
 
 
 def path_is_denied(relative: Path) -> bool:
