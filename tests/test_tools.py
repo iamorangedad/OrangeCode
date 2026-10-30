@@ -96,6 +96,19 @@ def test_schemas_use_openai_function_shape(tmp_path: Path) -> None:
     assert names == ["read_file", "write_file", "edit_file", "search", "list_files", "execute_shell"]
 
 
+def test_full_read_rejects_files_over_400_lines(tmp_path: Path) -> None:
+    registry = ToolRegistry(tmp_path)
+    body = "".join(f"line {number}\n" for number in range(1, 402))
+    (tmp_path / "long.py").write_text(body, encoding="utf-8")
+    refused = registry.read_file("long.py")
+    assert refused.startswith("Error:")
+    assert "401 lines" in refused
+    assert "line 1" not in refused
+    ranged = registry.read_file("long.py", start_line=1, end_line=20)
+    assert "lines 1-20 of 401" in ranged
+    assert "1|line 1" in ranged
+
+
 def test_read_file_line_range_includes_line_numbers(tmp_path: Path) -> None:
     registry = ToolRegistry(tmp_path)
     (tmp_path / "math_utils.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
