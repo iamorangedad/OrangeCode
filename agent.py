@@ -85,11 +85,26 @@ class Agent:
                 return text
 
             self.messages.append(_assistant_message(result))
-            for call in result.tool_calls:
-                output = self.execute_tool(call)
-                self.messages.append(
-                    {"role": "tool", "tool_call_id": call.id, "content": output}
-                )
+            finished = 0
+            try:
+                for call in result.tool_calls:
+                    output = self.execute_tool(call)
+                    self.messages.append(
+                        {"role": "tool", "tool_call_id": call.id, "content": output}
+                    )
+                    finished += 1
+            except KeyboardInterrupt:
+                for call in result.tool_calls[finished:]:
+                    self.messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": call.id,
+                            "content": "Error: interrupted",
+                        }
+                    )
+                text = "Interrupted."
+                self.messages.append({"role": "assistant", "content": text})
+                return text
 
         text = f"Stopped: reached the maximum of {self.max_steps} tool steps."
         self.messages.append({"role": "assistant", "content": text})
