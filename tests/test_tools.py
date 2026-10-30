@@ -125,6 +125,14 @@ def test_search_regex_and_no_match(tmp_path: Path) -> None:
     assert "invalid regular expression" in registry.execute("search", {"query": "(", "regex": True})
 
 
+def test_write_and_edit_leave_no_temporary_file(tmp_path: Path) -> None:
+    registry = ToolRegistry(tmp_path)
+    registry.write_file("src/note.txt", "hello")
+    registry.edit_file("src/note.txt", "hello", "hello!")
+    assert (tmp_path / "src" / "note.txt").read_text(encoding="utf-8") == "hello!"
+    assert [path.name for path in (tmp_path / "src").iterdir()] == ["note.txt"]
+
+
 def test_edit_file_replaces_unique_snippet(tmp_path: Path) -> None:
     registry = ToolRegistry(tmp_path)
     (tmp_path / "math_utils.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
