@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from config import load_project_config, prefer_env
 from llm import ChatResult, LLMClient, LLMError, ToolCall
 from mcp_client import MCPClient, MCPError
 from session import new_session_path, save_session
@@ -56,11 +57,22 @@ class Agent:
         One-shot runs pass interactive=False so shell stays disabled unless
         SHELL=allow is set.
         """
-        registry = ToolRegistry(Path.cwd(), shell_policy=resolve_shell_policy(interactive))
-        llm = LLMClient()
-        mcp = _start_mcp(os.getenv("MCP_COMMAND", ""))
-        max_steps = _positive_int(os.getenv("MAX_STEPS"), DEFAULT_MAX_STEPS)
-        check_command = os.getenv("CHECK_COMMAND", "")
+        workspace = Path.cwd()
+        file_config = load_project_config(workspace)
+        registry = ToolRegistry(
+            workspace,
+            shell_policy=resolve_shell_policy(interactive, configured=file_config.get("shell")),
+        )
+        llm = LLMClient(
+            base_url=prefer_env(os.getenv("BASE_URL") or os.getenv("OLLAMA_HOST"), file_config.get("base_url")),
+            model=prefer_env(os.getenv("MODEL") or os.getenv("OLLAMA_MODEL"), file_config.get("model")),
+        )
+        mcp = _start_mcp(prefer_env(os.getenv("MCP_COMMAND"), file_config.get("mcp_command")) or "")
+        max_steps = _positive_int(
+            prefer_env(os.getenv("MAX_STEPS"), file_config.get("max_steps")),
+            DEFAULT_MAX_STEPS,
+        )
+        check_command = prefer_env(os.getenv("CHECK_COMMAND"), file_config.get("check_command")) or ""
         budget = _positive_int(os.getenv("MESSAGE_CHAR_BUDGET"), DEFAULT_MESSAGE_CHAR_BUDGET)
         return cls(
             llm=llm,
