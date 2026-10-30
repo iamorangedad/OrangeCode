@@ -106,6 +106,30 @@ def test_edit_file_replaces_unique_snippet(tmp_path: Path) -> None:
     assert (tmp_path / "math_utils.py").read_text(encoding="utf-8") == "def add(a, b):\n    return a + b\n"
 
 
+def test_secret_file_is_not_read(tmp_path: Path) -> None:
+    registry = ToolRegistry(tmp_path)
+    (tmp_path / ".env").write_text("TOKEN=secret\n", encoding="utf-8")
+    result = registry.execute("read_file", {"path": ".env"})
+    assert result.startswith("Error: path is not available")
+    assert "TOKEN" not in result
+
+
+def test_search_skips_secret_files(tmp_path: Path) -> None:
+    registry = ToolRegistry(tmp_path)
+    (tmp_path / ".env").write_text("TOKEN=secret\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text("TOKEN = 1\n", encoding="utf-8")
+    result = registry.execute("search", {"query": "TOKEN"})
+    assert "app.py:1:" in result
+    assert ".env" not in result
+
+
+def test_write_inside_git_directory_is_rejected(tmp_path: Path) -> None:
+    registry = ToolRegistry(tmp_path)
+    result = registry.execute("write_file", {"path": ".git/config", "content": "x"})
+    assert result.startswith("Error: path is not available")
+    assert not (tmp_path / ".git" / "config").exists()
+
+
 def test_edit_file_rejects_missing_and_repeated_text(tmp_path: Path) -> None:
     registry = ToolRegistry(tmp_path)
     (tmp_path / "app.py").write_text("x = 1\nx = 1\n", encoding="utf-8")
