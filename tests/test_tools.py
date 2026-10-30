@@ -182,6 +182,16 @@ def test_write_inside_git_directory_is_rejected(tmp_path: Path) -> None:
     assert not (tmp_path / ".git" / "config").exists()
 
 
+def test_only_successful_writes_are_recorded(tmp_path: Path) -> None:
+    registry = ToolRegistry(tmp_path)
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    registry.read_file("app.py")
+    registry.edit_file("app.py", "missing", "value = 2")
+    assert registry.written_paths == set()
+    registry.edit_file("app.py", "value = 1", "value = 2")
+    assert registry.written_paths == {"app.py"}
+
+
 def test_edit_file_rejects_missing_and_repeated_text(tmp_path: Path) -> None:
     registry = ToolRegistry(tmp_path)
     (tmp_path / "app.py").write_text("x = 1\nx = 1\n", encoding="utf-8")
