@@ -156,9 +156,13 @@ class Agent:
         """Dispatch one tool call to MCP or the built-in registry."""
         if not call.name:
             return "Error: tool name is missing"
+        _trace_start(call)
         if self.mcp is not None and self.mcp.owns(call.name):
-            return self.mcp.call(call.name, call.arguments)
-        return self.registry.execute(call.name, call.arguments)
+            output = self.mcp.call(call.name, call.arguments)
+        else:
+            output = self.registry.execute(call.name, call.arguments)
+        _trace_end(call.name, output)
+        return output
 
     def _check_failure(self) -> str | None:
         """Run CHECK_COMMAND after writes. Return a user message when it fails."""
@@ -250,6 +254,41 @@ def _start_mcp(command: str) -> MCPClient | None:
         client.close()
         return None
     return client
+
+
+def _trace_enabled() -> bool:
+    """Return False when TRACE is 0, false, or no. Tracing is on otherwise."""
+    return os.getenv("TRACE", "").strip().lower() not in {"0", "false", "no"}
+
+
+def _trace_start(call: ToolCall) -> None:
+    if not _trace_enabled():
+        return
+    detail = _trace_detail(call.arguments)
+    suffix = f" {detail}" if detail else ""
+    print(f"→ {call.name}{suffix}", file=sys.stderr)
+
+
+def _trace_end(name: str, output: str) -> None:
+    if not _trace_enabled():
+        return
+    status = "error" if output.startswith("Error:") else f"{len(output)} chars"
+    print(f"← {name} {status}", file=sys.stderr)
+
+
+def _trace_detail(arguments: dict[str, Any] | None) -> str:
+    if not arguments:
+        return ""
+    parts: list[str] = []
+    for key in ("path", "command", "query"):
+        value = arguments.get(key)
+        if value is None or value == "":
+            continue
+        text = str(value).replace("\n", " ")
+        if len(text) > 80:
+            text = text[:77] + "..."
+        parts.append(f"{key}={text}")
+    return " ".join(parts)
 
 
 def trim_messages(messages: list[dict[str, Any]], budget: int) -> list[dict[str, Any]]:
