@@ -16,6 +16,7 @@ from typing import Any
 
 from llm import ChatResult, LLMClient, LLMError, ToolCall
 from mcp_client import MCPClient, MCPError
+from session import new_session_path, save_session
 from tools import ToolRegistry, limit_text, resolve_shell_policy
 
 DEFAULT_MAX_STEPS = 8
@@ -34,6 +35,7 @@ class Agent:
         max_steps: int = DEFAULT_MAX_STEPS,
         check_command: str = "",
         message_char_budget: int = DEFAULT_MESSAGE_CHAR_BUDGET,
+        session_path: Path | None = None,
     ) -> None:
         self.llm = llm
         self.registry = registry
@@ -41,6 +43,7 @@ class Agent:
         self.max_steps = max_steps
         self.check_command = check_command.strip()
         self.message_char_budget = message_char_budget
+        self.session_path = session_path
         self.messages: list[dict[str, Any]] = [
             {"role": "system", "content": build_system_prompt(registry.workspace)}
         ]
@@ -65,6 +68,7 @@ class Agent:
             max_steps=max_steps,
             check_command=check_command,
             message_char_budget=budget,
+            session_path=new_session_path(Path.cwd()),
         )
 
     def schemas(self) -> list[dict[str, Any]]:
@@ -83,6 +87,18 @@ class Agent:
 
     def run(self, user_text: str) -> str:
         """Append a user message and run the loop until a final answer."""
+        try:
+            return self._run(user_text)
+        finally:
+            self.persist_session()
+
+    def persist_session(self) -> None:
+        """Write the full transcript when this agent has a session path."""
+        if self.session_path is None:
+            return
+        save_session(self.session_path, self.messages)
+
+    def _run(self, user_text: str) -> str:
         self.registry.written_paths.clear()
         self.messages.append({"role": "user", "content": user_text})
         schemas = self.schemas()
