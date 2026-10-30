@@ -152,6 +152,42 @@ def test_one_shot_from_env_denies_shell(tmp_path: Path, monkeypatch: pytest.Monk
         agent.close()
 
 
+def test_tool_trace_is_written_to_stderr(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    llm = _ScriptedLLM(
+        [
+            ChatResult(
+                content=None,
+                tool_calls=[ToolCall(id="call_1", name="list_files", arguments={"path": "."})],
+            ),
+            ChatResult(content="listed", tool_calls=[]),
+        ]
+    )
+    agent = Agent(llm, ToolRegistry(tmp_path), max_steps=2)
+    assert agent.run("list") == "listed"
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "→ list_files" in captured.err
+    assert "← list_files" in captured.err
+
+
+def test_trace_can_be_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setenv("TRACE", "0")
+    llm = _ScriptedLLM(
+        [
+            ChatResult(
+                content=None,
+                tool_calls=[ToolCall(id="call_1", name="list_files", arguments={"path": "."})],
+            ),
+            ChatResult(content="listed", tool_calls=[]),
+        ]
+    )
+    agent = Agent(llm, ToolRegistry(tmp_path), max_steps=2)
+    assert agent.run("list") == "listed"
+    captured = capsys.readouterr()
+    assert "list_files" not in captured.err
+    assert captured.out == ""
+
+
 def test_saved_session_reloads_on_a_new_agent(tmp_path: Path) -> None:
     path = tmp_path / ".orangecode" / "sessions" / "demo.jsonl"
     llm = _ScriptedLLM([ChatResult(content="ok", tool_calls=[])])
