@@ -59,6 +59,29 @@ def test_model_error_is_returned_as_text(tmp_path: Path) -> None:
     assert agent.run("hello") == "Error: connection refused"
 
 
+def test_interrupt_fills_missing_tool_results(tmp_path: Path) -> None:
+    class _InterruptRegistry(ToolRegistry):
+        def execute(self, name: str, arguments: dict) -> str:
+            raise KeyboardInterrupt()
+
+    llm = _ScriptedLLM(
+        [
+            ChatResult(
+                content=None,
+                tool_calls=[
+                    ToolCall(id="call_1", name="list_files", arguments={}),
+                    ToolCall(id="call_2", name="read_file", arguments={"path": "a.py"}),
+                ],
+            )
+        ]
+    )
+    agent = Agent(llm, _InterruptRegistry(tmp_path), max_steps=4)
+    assert agent.run("edit the file") == "Interrupted."
+    tool_messages = [message for message in agent.messages if message["role"] == "tool"]
+    assert [message["tool_call_id"] for message in tool_messages] == ["call_1", "call_2"]
+    assert all(message["content"] == "Error: interrupted" for message in tool_messages)
+
+
 def test_one_shot_from_env_denies_shell(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("MCP_COMMAND", raising=False)
