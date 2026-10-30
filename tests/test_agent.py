@@ -59,6 +59,18 @@ def test_model_error_is_returned_as_text(tmp_path: Path) -> None:
     assert agent.run("hello") == "Error: connection refused"
 
 
+def test_one_shot_from_env_denies_shell(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MCP_COMMAND", raising=False)
+    monkeypatch.delenv("CONFIRM_SHELL", raising=False)
+    monkeypatch.setenv("SHELL", "/bin/bash")
+    agent = Agent.from_env(interactive=False)
+    try:
+        assert agent.registry.shell_policy == "deny"
+    finally:
+        agent.close()
+
+
 def test_system_prompt_includes_agents_md(tmp_path: Path) -> None:
     (tmp_path / "AGENTS.md").write_text("Use Python 3.11.", encoding="utf-8")
     prompt = build_system_prompt(tmp_path)
