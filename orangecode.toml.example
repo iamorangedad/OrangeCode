@@ -1,0 +1,9 @@
+# Copy to orangecode.toml in a workspace. Environment variables override these values.
+# Do not put an API key in this file.
+
+model = "qwen2.5-coder:3b"
+base_url = "http://127.0.0.1:11434"
+max_steps = 8
+check_command = "python3 -m pytest"
+shell = "ask"
+mcp_command = ""
