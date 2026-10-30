@@ -44,6 +44,7 @@ class ToolRegistry:
         self.confirm_shell = self.shell_policy == "ask"
         self.confirmer = confirmer or _prompt_to_confirm
         self.shell_timeout = shell_timeout
+        self.written_paths: set[str] = set()
 
     def schemas(self) -> list[dict[str, Any]]:
         """Return OpenAI tool definitions for the built-in tools."""
@@ -212,6 +213,7 @@ class ToolRegistry:
         _write_atomic(target, updated)
         new_span = _line_span(updated, start, new_text) if new_text else old_span
         relative = target.relative_to(self.workspace)
+        self.written_paths.add(str(relative))
         if new_text:
             preview = _numbered_snippet(updated, new_span[0], new_span[1])
             return (
@@ -269,7 +271,9 @@ class ToolRegistry:
         if denied:
             return denied
         _write_atomic(target, content)
-        return f"Wrote {target.relative_to(self.workspace)} ({len(content)} characters)"
+        relative = target.relative_to(self.workspace)
+        self.written_paths.add(str(relative))
+        return f"Wrote {relative} ({len(content)} characters)"
 
     def list_files(self, path: str = ".", recursive: bool = False) -> str:
         """List workspace entries, capped so the result stays small."""
