@@ -30,7 +30,20 @@ Interactive commands are `config` and `quit`.
 - `list_files` lists workspace entries
 - `execute_shell` runs a command with the workspace as its working directory
 
-Set `CONFIRM_SHELL=1` to ask before each shell command. `MAX_STEPS` limits tool rounds (default 8).
+`SHELL` controls `execute_shell`:
+
+- interactive sessions default to `ask` and confirm each command
+- `python3 orangecode.py "task"` defaults to `deny` and does not run a command
+- `SHELL=allow` runs commands without a prompt
+- `SHELL=deny` refuses them
+- `CONFIRM_SHELL=1` still means ask, and `CONFIRM_SHELL=0` means allow. An explicit `SHELL` value wins
+- `ask` with no terminal is treated as deny
+
+An allowed command is still not a sandbox. It runs through the system shell with the workspace as its working directory.
+
+`read_file`, `write_file`, and `edit_file` refuse `.env`, `.env.*`, `.netrc`, `id_rsa`, `id_dsa`, `credentials.json`, and files ending in `.pem`, `.key`, `.p12`, or `.pfx`. They also refuse anything under `.git` or `.orangecode`. `search` skips those paths.
+
+`MAX_STEPS` limits tool rounds (default 8). `MCP_TIMEOUT` is the MCP read timeout in seconds (default 30, maximum 120).
 
 ## MCP
 
