@@ -24,7 +24,7 @@ Orange Code is a minimal coding agent. It completes small coding tasks by callin
 orangecode.py   # CLI entry point
 agent.py        # Tool-calling loop
 llm.py          # OpenAI-compatible client
-tools.py        # read_file, write_file, list_files, execute_shell
+tools.py        # read_file, write_file, edit_file, search, list_files, execute_shell
 mcp_client.py   # stdio MCP client
 tests/          # pytest suite
 ```
@@ -34,8 +34,10 @@ tests/          # pytest suite
 - `MODEL` or `OLLAMA_MODEL`: model name. Default `qwen2.5-coder:3b`.
 - `API_KEY` or `OPENAI_API_KEY`: bearer token when the endpoint requires one.
 - `MCP_COMMAND`: optional stdio MCP server command.
+- `MCP_TIMEOUT`: seconds to wait for an MCP response. Default 30, maximum 120.
 - `MAX_STEPS`: tool-calling rounds. Default 8.
-- `CONFIRM_SHELL`: set to `1` to confirm shell commands.
+- `SHELL`: `ask`, `allow`, or `deny`. Interactive sessions default to `ask`. One-shot runs default to `deny`.
+- `CONFIRM_SHELL`: `1` means ask and `0` means allow, unless `SHELL` is exactly `ask`, `allow`, or `deny`.
 
 ## Tools
-Built-in tools stay inside the current working directory. MCP tools use the `mcp_` prefix and are listed beside the built-in tools.
+Built-in tools stay inside the current working directory. `read_file`, `write_file`, and `edit_file` refuse secret files and paths inside `.git` or `.orangecode`. `search` skips those paths. MCP tools use the `mcp_` prefix and are listed beside the built-in tools.
