@@ -23,7 +23,7 @@ Interactive commands are `config` and `quit`.
 
 ## Tools
 
-- `read_file` reads a text file, or a line range when `start_line` and `end_line` are set
+- `read_file` reads a text file, or a line range when `start_line` and `end_line` are set. A file longer than 400 lines must be read by range.
 - `search` finds text or a per-line regular expression and returns `path:line`
 - `edit_file` replaces one unique snippet and reports the lines that changed
 - `write_file` creates or overwrites a whole file
@@ -44,6 +44,12 @@ An allowed command is still not a sandbox. It runs through the system shell with
 `read_file`, `write_file`, and `edit_file` refuse `.env`, `.env.*`, `.netrc`, `id_rsa`, `id_dsa`, `credentials.json`, and files ending in `.pem`, `.key`, `.p12`, or `.pfx`. They also refuse anything under `.git` or `.orangecode`. `search` skips those paths.
 
 `MAX_STEPS` limits tool rounds (default 8). `MCP_TIMEOUT` is the MCP read timeout in seconds (default 30, maximum 120).
+
+`CHECK_COMMAND` runs when the model stops after `write_file` or `edit_file` changed a file in that request. It does not ask for shell confirmation. Exit code 0 returns the model's answer. Any other exit sends the command output back and continues the loop, still inside `MAX_STEPS`. Leave it unset to skip the check.
+
+```bash
+export CHECK_COMMAND="python3 -m pytest"
+```
 
 ## MCP
 
