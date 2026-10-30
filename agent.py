@@ -15,7 +15,7 @@ from typing import Any
 
 from llm import ChatResult, LLMClient, LLMError, ToolCall
 from mcp_client import MCPClient, MCPError
-from tools import ToolRegistry
+from tools import ToolRegistry, resolve_shell_policy
 
 DEFAULT_MAX_STEPS = 8
 CONTEXT_CHAR_LIMIT = 6000
@@ -40,10 +40,13 @@ class Agent:
         ]
 
     @classmethod
-    def from_env(cls) -> Agent:
-        """Build an agent from environment variables and the current directory."""
-        confirm = os.getenv("CONFIRM_SHELL", "").strip().lower() in {"1", "true", "yes"}
-        registry = ToolRegistry(Path.cwd(), confirm_shell=confirm)
+    def from_env(cls, interactive: bool = True) -> Agent:
+        """Build an agent from environment variables and the current directory.
+
+        One-shot runs pass interactive=False so shell stays disabled unless
+        SHELL=allow is set.
+        """
+        registry = ToolRegistry(Path.cwd(), shell_policy=resolve_shell_policy(interactive))
         llm = LLMClient()
         mcp = _start_mcp(os.getenv("MCP_COMMAND", ""))
         max_steps = _positive_int(os.getenv("MAX_STEPS"), DEFAULT_MAX_STEPS)
