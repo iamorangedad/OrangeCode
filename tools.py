@@ -375,13 +375,18 @@ class ToolRegistry:
         return None
 
 
-def resolve_shell_policy(interactive: bool, environ: Mapping[str, str] | None = None) -> str:
+def resolve_shell_policy(
+    interactive: bool,
+    environ: Mapping[str, str] | None = None,
+    configured: str | None = None,
+) -> str:
     """Pick ask, allow, or deny for this process.
 
     ``SHELL`` wins when it is exactly ask, allow, or deny. A normal login
     shell path such as ``/bin/bash`` is ignored. ``CONFIRM_SHELL=1`` means
-    ask and ``CONFIRM_SHELL=0`` means allow. Otherwise interactive sessions
-    ask, and one-shot runs deny.
+    ask and ``CONFIRM_SHELL=0`` means allow. A project-file value is used
+    only when those variables do not choose a policy. Otherwise interactive
+    sessions ask, and one-shot runs deny.
     """
     env = os.environ if environ is None else environ
     chosen = env.get("SHELL", "").strip().lower()
@@ -392,6 +397,8 @@ def resolve_shell_policy(interactive: bool, environ: Mapping[str, str] | None = 
         return "ask"
     if confirm in {"0", "false", "no"}:
         return "allow"
+    if configured and configured.strip().lower() in {"ask", "allow", "deny"}:
+        return configured.strip().lower()
     return "ask" if interactive else "deny"
 
 
