@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from agent import Agent
 from session import latest_session, load_session, resolve_session
+from snapshot import undo_latest
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -16,7 +18,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("query", nargs="*", help="Run one request and exit")
     parser.add_argument("--config", action="store_true", help="Print model and tool settings")
     parser.add_argument("--resume", metavar="ID", help="Continue a saved session")
+    parser.add_argument("--undo", action="store_true", help="Restore the newest file snapshot")
     args = parser.parse_args(argv)
+
+    if args.undo:
+        print(undo_latest(Path.cwd()))
+        return 0
 
     agent = Agent.from_env(interactive=not args.query)
     try:
@@ -38,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
 def interactive(agent: Agent) -> int:
     """Read requests from the terminal until the user quits."""
     print("Orange Code")
-    print("Type a request. Commands: config, resume, quit")
+    print("Type a request. Commands: config, resume, undo, quit")
     while True:
         try:
             user_input = input("You: ").strip()
@@ -60,6 +67,9 @@ def interactive(agent: Agent) -> int:
         if lowered == "resume":
             if not resume_latest(agent):
                 print("No saved session.")
+            continue
+        if lowered == "undo":
+            print(undo_latest(agent.registry.workspace))
             continue
         try:
             print(agent.run(user_input))
