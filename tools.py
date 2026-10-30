@@ -13,6 +13,7 @@ MAX_OUTPUT_CHARS = 20000
 MAX_LIST_ENTRIES = 200
 MAX_SEARCH_MATCHES = 50
 MAX_SEARCH_FILE_BYTES = 1_000_000
+MAX_FULL_READ_LINES = 400
 SKIP_DIRS = {".git", ".orangecode", "__pycache__", ".venv", "node_modules"}
 _SECRET_NAMES = {".env", ".netrc", "id_rsa", "id_dsa", "credentials.json"}
 _SECRET_SUFFIXES = {".pem", ".key", ".p12", ".pfx"}
@@ -161,10 +162,15 @@ class ToolRegistry:
         if not target.is_file():
             return f"Error: file not found: {path}"
         text = target.read_text(encoding="utf-8", errors="replace")
+        lines = text.splitlines()
         if start_line is None and end_line is None:
+            if len(lines) > MAX_FULL_READ_LINES:
+                return (
+                    f"Error: {path} has {len(lines)} lines. "
+                    "Pass start_line and end_line, or search first."
+                )
             return limit_text(text)
 
-        lines = text.splitlines()
         start = 1 if start_line is None else start_line
         end = len(lines) if end_line is None else end_line
         if start < 1 or (end_line is not None and end < 1):
