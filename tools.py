@@ -12,7 +12,10 @@ MAX_OUTPUT_CHARS = 20000
 MAX_LIST_ENTRIES = 200
 MAX_SEARCH_MATCHES = 50
 MAX_SEARCH_FILE_BYTES = 1_000_000
-SKIP_DIRS = {".git", "__pycache__", ".venv", "node_modules"}
+SKIP_DIRS = {".git", ".orangecode", "__pycache__", ".venv", "node_modules"}
+_SECRET_NAMES = {".env", ".netrc", "id_rsa", "id_dsa", "credentials.json"}
+_SECRET_SUFFIXES = {".pem", ".key", ".p12", ".pfx"}
+_DENIED_PARTS = {".git", ".orangecode"}
 
 
 def limit_text(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
@@ -149,6 +152,9 @@ class ToolRegistry:
     def read_file(self, path: str, start_line: int | None = None, end_line: int | None = None) -> str:
         """Read a text file, or a 1-based inclusive line range with line numbers."""
         target = self._resolve(path)
+        denied = self._unavailable(target, path)
+        if denied:
+            return denied
         if not target.is_file():
             return f"Error: file not found: {path}"
         text = target.read_text(encoding="utf-8", errors="replace")
@@ -178,6 +184,9 @@ class ToolRegistry:
         if old_text == "":
             return "Error: old_text is required"
         target = self._resolve(path)
+        denied = self._unavailable(target, path)
+        if denied:
+            return denied
         if not target.is_file():
             return f"Error: file not found: {path}"
 
@@ -221,13 +230,14 @@ class ToolRegistry:
         for file_path in _iter_text_files(root):
             resolved = file_path.resolve()
             try:
-                resolved.relative_to(self.workspace)
+                relative = resolved.relative_to(self.workspace)
             except ValueError:
+                continue
+            if path_is_denied(relative):
                 continue
             text = _read_searchable(resolved)
             if text is None:
                 continue
-            relative = resolved.relative_to(self.workspace)
             for number, line in enumerate(text.splitlines(), start=1):
                 found = pattern.search(line) if pattern is not None else query in line
                 if not found:
@@ -246,6 +256,9 @@ class ToolRegistry:
         if not path:
             return "Error: path is required"
         target = self._resolve(path)
+        denied = self._unavailable(target, path)
+        if denied:
+            return denied
         parent = target.parent
         if not parent.exists():
             parent.mkdir(parents=True, exist_ok=True)
@@ -329,6 +342,23 @@ class ToolRegistry:
         except ValueError as exc:
             raise ValueError(f"path is outside the workspace: {path}") from exc
         return resolved
+
+    def _unavailable(self, target: Path, display: str) -> str | None:
+        """Return an error when the resolved path is a secret or VCS path."""
+        relative = target.relative_to(self.workspace)
+        if path_is_denied(relative):
+            return f"Error: path is not available: {display}"
+        return None
+
+
+def path_is_denied(relative: Path) -> bool:
+    """Return True for secret files and for paths inside .git or .orangecode."""
+    if any(part in _DENIED_PARTS for part in relative.parts):
+        return True
+    name = relative.name
+    if name in _SECRET_NAMES or name.startswith(".env."):
+        return True
+    return relative.suffix.lower() in _SECRET_SUFFIXES
 
 
 def _prompt_to_confirm(command: str) -> bool:
