@@ -19,6 +19,7 @@ from mcp_client import MCPClient, MCPError
 from tools import ToolRegistry, limit_text, resolve_shell_policy
 
 DEFAULT_MAX_STEPS = 8
+DEFAULT_MESSAGE_CHAR_BUDGET = 24000
 CONTEXT_CHAR_LIMIT = 6000
 
 
@@ -32,12 +33,14 @@ class Agent:
         mcp: MCPClient | None = None,
         max_steps: int = DEFAULT_MAX_STEPS,
         check_command: str = "",
+        message_char_budget: int = DEFAULT_MESSAGE_CHAR_BUDGET,
     ) -> None:
         self.llm = llm
         self.registry = registry
         self.mcp = mcp
         self.max_steps = max_steps
         self.check_command = check_command.strip()
+        self.message_char_budget = message_char_budget
         self.messages: list[dict[str, Any]] = [
             {"role": "system", "content": build_system_prompt(registry.workspace)}
         ]
@@ -54,12 +57,14 @@ class Agent:
         mcp = _start_mcp(os.getenv("MCP_COMMAND", ""))
         max_steps = _positive_int(os.getenv("MAX_STEPS"), DEFAULT_MAX_STEPS)
         check_command = os.getenv("CHECK_COMMAND", "")
+        budget = _positive_int(os.getenv("MESSAGE_CHAR_BUDGET"), DEFAULT_MESSAGE_CHAR_BUDGET)
         return cls(
             llm=llm,
             registry=registry,
             mcp=mcp,
             max_steps=max_steps,
             check_command=check_command,
+            message_char_budget=budget,
         )
 
     def schemas(self) -> list[dict[str, Any]]:
@@ -84,7 +89,8 @@ class Agent:
 
         for _ in range(self.max_steps):
             try:
-                result = self.llm.chat(self.messages, tools=schemas)
+                payload = trim_messages(self.messages, self.message_char_budget)
+                result = self.llm.chat(payload, tools=schemas)
             except LLMError as exc:
                 text = f"Error: {exc}"
                 self.messages.append({"role": "assistant", "content": text})
@@ -223,6 +229,52 @@ def _start_mcp(command: str) -> MCPClient | None:
         client.close()
         return None
     return client
+
+
+def trim_messages(messages: list[dict[str, Any]], budget: int) -> list[dict[str, Any]]:
+    """Return a copy whose non-system text fits the character budget.
+
+    The stored transcript is left unchanged. The system message and the last
+    user message stay intact. Oldest tool results are replaced first.
+    """
+    copied = [dict(message) for message in messages]
+    last_user = None
+    for index, message in enumerate(copied):
+        if message.get("role") == "user":
+            last_user = index
+
+    def size() -> int:
+        return sum(_message_chars(message) for message in copied if message.get("role") != "system")
+
+    for index, message in enumerate(copied):
+        if size() <= budget:
+            return copied
+        if message.get("role") != "tool":
+            continue
+        content = message.get("content")
+        if not isinstance(content, str) or content.startswith("[trimmed]"):
+            continue
+        copied[index] = {**message, "content": f"[trimmed] tool result omitted ({len(content)} characters)"}
+
+    for index, message in enumerate(copied):
+        if size() <= budget:
+            return copied
+        if message.get("role") not in {"user", "assistant"} or index == last_user:
+            continue
+        content = message.get("content")
+        if not isinstance(content, str) or content.startswith("[trimmed]"):
+            continue
+        copied[index] = {**message, "content": f"[trimmed] message omitted ({len(content)} characters)"}
+    return copied
+
+
+def _message_chars(message: dict[str, Any]) -> int:
+    content = message.get("content")
+    total = len(content) if isinstance(content, str) else 0
+    tool_calls = message.get("tool_calls")
+    if tool_calls:
+        total += len(json.dumps(tool_calls))
+    return total
 
 
 def _positive_int(raw: str | None, default: int) -> int:
