@@ -203,7 +203,7 @@ class ToolRegistry:
         start = original.find(old_text)
         old_span = _line_span(original, start, old_text)
         updated = original.replace(old_text, new_text, 1)
-        target.write_text(updated, encoding="utf-8")
+        _write_atomic(target, updated)
         new_span = _line_span(updated, start, new_text) if new_text else old_span
         relative = target.relative_to(self.workspace)
         if new_text:
@@ -262,10 +262,7 @@ class ToolRegistry:
         denied = self._unavailable(target, path)
         if denied:
             return denied
-        parent = target.parent
-        if not parent.exists():
-            parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        _write_atomic(target, content)
         return f"Wrote {target.relative_to(self.workspace)} ({len(content)} characters)"
 
     def list_files(self, path: str = ".", recursive: bool = False) -> str:
@@ -395,6 +392,20 @@ def path_is_denied(relative: Path) -> bool:
     if name in _SECRET_NAMES or name.startswith(".env."):
         return True
     return relative.suffix.lower() in _SECRET_SUFFIXES
+
+
+def _write_atomic(target: Path, content: str) -> None:
+    """Replace a file by writing a sibling temp file and renaming it."""
+    parent = target.parent
+    if not parent.exists():
+        parent.mkdir(parents=True, exist_ok=True)
+    temporary = parent / f".{target.name}.{os.getpid()}.tmp"
+    try:
+        temporary.write_text(content, encoding="utf-8")
+        os.replace(temporary, target)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
 
 
 def _prompt_to_confirm(command: str) -> bool:
